@@ -25,8 +25,15 @@ struct AppRunner<Application: App> {
     var app: Application
 
     func run() throws {
-        guard let root = app.body as? any RootScene,
-              let block = ViewResolver.block(from: root.root) else {
+        guard let root = app.body as? any RootScene else {
+            return
+        }
+
+        let viewport = TerminalControl.currentTerminalSize()
+        guard let block = ViewResolver.block(
+            from: root.root,
+            in: RenderProposal(viewport)
+        ) else {
             return
         }
 
@@ -36,13 +43,12 @@ struct AppRunner<Application: App> {
             session.stop()
         }
 
-        render(block)
+        render(block, in: viewport)
 
         while TerminalControl.readInput() != .quit {}
     }
 
-    private func render(_ block: RenderedBlock) {
-        let viewport = TerminalControl.currentTerminalSize()
+    private func render(_ block: RenderedBlock, in viewport: TerminalViewportSize) {
         TerminalControl.write(TextRenderer.screen(for: block, in: viewport))
     }
 }

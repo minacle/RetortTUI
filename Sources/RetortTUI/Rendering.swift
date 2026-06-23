@@ -38,6 +38,29 @@ struct RenderedBlock: Equatable, Sendable {
     }
 }
 
+struct RenderProposal: Equatable, Sendable {
+
+    var columns: Int?
+
+    var rows: Int?
+
+    init(columns: Int? = nil, rows: Int? = nil) {
+        self.columns = columns.map { max($0, 0) }
+        self.rows = rows.map { max($0, 0) }
+    }
+
+    init(_ viewport: TerminalViewportSize) {
+        self.init(columns: viewport.columns, rows: viewport.rows)
+    }
+}
+
+enum RenderedElement: Equatable, Sendable {
+
+    case block(RenderedBlock)
+
+    case spacer(minLength: Int)
+}
+
 enum ViewResolver {
 
     static func text<Content: View>(from view: Content) -> String? {
@@ -45,6 +68,13 @@ enum ViewResolver {
     }
 
     static func block<Content: View>(from view: Content) -> RenderedBlock? {
+        block(from: view, in: nil)
+    }
+
+    static func block<Content: View>(
+        from view: Content,
+        in proposal: RenderProposal?
+    ) -> RenderedBlock? {
         if let text = view as? Text {
             return RenderedBlock(lines: [text.content])
         }
@@ -53,19 +83,68 @@ enum ViewResolver {
             return nil
         }
 
+        if let spacer = view as? Spacer {
+            return block(for: spacer, in: proposal)
+        }
+
         if let group = view as? ViewGroup {
             return StackRenderer.vertical(
-                group.elements.compactMap { $0.renderedBlock() },
+                group.elements.compactMap {
+                    $0.renderedElement(in: proposal)
+                },
                 alignment: .leading,
-                spacing: 0
+                spacing: 0,
+                proposal: proposal
             )
         }
 
         if let stack = view as? any StackRenderable {
-            return stack.renderedBlock()
+            return stack.renderedBlock(in: proposal)
         }
 
-        return block(from: view.body)
+        return block(from: view.body, in: proposal)
+    }
+
+    static func element<Content: View>(
+        from view: Content,
+        in proposal: RenderProposal?
+    ) -> RenderedElement? {
+        if let text = view as? Text {
+            return .block(RenderedBlock(lines: [text.content]))
+        }
+
+        if view is EmptyView {
+            return nil
+        }
+
+        if let spacer = view as? Spacer {
+            return .spacer(minLength: spacer.minLength ?? 0)
+        }
+
+        if let group = view as? ViewGroup {
+            return block(from: group, in: proposal).map { .block($0) }
+        }
+
+        if let stack = view as? any StackRenderable {
+            return stack.renderedBlock(in: proposal).map { .block($0) }
+        }
+
+        return element(from: view.body, in: proposal)
+    }
+
+    private static func block(
+        for spacer: Spacer,
+        in proposal: RenderProposal?
+    ) -> RenderedBlock? {
+        let minLength = spacer.minLength ?? 0
+        let width = max(proposal?.columns ?? minLength, minLength)
+        let height = max(proposal?.rows ?? minLength, minLength)
+        guard width > 0 || height > 0 else {
+            return nil
+        }
+
+        let line = String(repeating: " ", count: width)
+        return RenderedBlock(lines: Array(repeating: line, count: max(height, 1)))
     }
 }
 
@@ -112,27 +191,35 @@ enum TextRenderer {
 
 protocol StackRenderable {
 
-    func renderedBlock() -> RenderedBlock?
+    func renderedBlock(in proposal: RenderProposal?) -> RenderedBlock?
 }
 
 extension HStack: StackRenderable {
 
-    func renderedBlock() -> RenderedBlock? {
+    func renderedBlock(in proposal: RenderProposal?) -> RenderedBlock? {
         StackRenderer.horizontal(
-            ViewResolver.blocks(from: content),
+            ViewResolver.elements(
+                from: content,
+                in: RenderProposal(rows: proposal?.rows)
+            ),
             alignment: alignment,
-            spacing: spacing
+            spacing: spacing,
+            proposal: proposal
         )
     }
 }
 
 extension VStack: StackRenderable {
 
-    func renderedBlock() -> RenderedBlock? {
+    func renderedBlock(in proposal: RenderProposal?) -> RenderedBlock? {
         StackRenderer.vertical(
-            ViewResolver.blocks(from: content),
+            ViewResolver.elements(
+                from: content,
+                in: RenderProposal(columns: proposal?.columns)
+            ),
             alignment: alignment,
-            spacing: spacing
+            spacing: spacing,
+            proposal: proposal
         )
     }
 }
@@ -146,25 +233,44 @@ extension ViewResolver {
 
         return block(from: view).map { [$0] } ?? []
     }
+
+    static func elements<Content: View>(
+        from view: Content,
+        in proposal: RenderProposal?
+    ) -> [RenderedElement] {
+        if let group = view as? ViewGroup {
+            return group.elements.compactMap {
+                $0.renderedElement(in: proposal)
+            }
+        }
+
+        return element(from: view, in: proposal).map { [$0] } ?? []
+    }
 }
 
 enum StackRenderer {
 
     static func horizontal(
-        _ blocks: [RenderedBlock],
+        _ elements: [RenderedElement],
         alignment: VerticalAlignment,
-        spacing: Int
+        spacing: Int,
+        proposal: RenderProposal? = nil
     ) -> RenderedBlock? {
-        let blocks = blocks.filter { !$0.lines.isEmpty }
-        guard !blocks.isEmpty else {
+        let items = horizontalItems(from: elements, spacing: spacing, proposal: proposal)
+        guard !items.isEmpty else {
             return nil
         }
 
-        let height = blocks.map(\.height).max() ?? 0
+        let height = items.compactMap(\.block?.height).max() ?? 1
         let gap = String(repeating: " ", count: max(spacing, 0))
         let lines = (0..<height).map { row in
-            blocks.map { block in
-                line(from: block, at: row, in: height, alignedBy: alignment)
+            items.map { item in
+                switch item.content {
+                case .block(let block):
+                    return line(from: block, at: row, in: height, alignedBy: alignment)
+                case .spacer:
+                    return String(repeating: " ", count: item.width)
+                }
             }.joined(separator: gap)
         }
 
@@ -172,23 +278,33 @@ enum StackRenderer {
     }
 
     static func vertical(
-        _ blocks: [RenderedBlock],
+        _ elements: [RenderedElement],
         alignment: HorizontalAlignment,
-        spacing: Int
+        spacing: Int,
+        proposal: RenderProposal? = nil
     ) -> RenderedBlock? {
-        let blocks = blocks.filter { !$0.lines.isEmpty }
-        guard !blocks.isEmpty else {
+        let items = verticalItems(from: elements, spacing: spacing, proposal: proposal)
+        guard !items.isEmpty else {
             return nil
         }
 
-        let width = blocks.map(\.width).max() ?? 0
+        let width = items.compactMap(\.block?.width).max() ?? 0
         let gap = Array(repeating: "", count: max(spacing, 0))
-        let lines = blocks.enumerated().flatMap { index, block in
-            let lines = block.lines.map {
-                line($0, alignedBy: alignment, in: width)
+        let lines = items.enumerated().flatMap { index, item in
+            let lines: [String]
+            switch item.content {
+            case .block(let block):
+                lines = block.lines.map {
+                    line($0, alignedBy: alignment, in: width)
+                }
+            case .spacer:
+                lines = Array(
+                    repeating: String(repeating: " ", count: width),
+                    count: item.height
+                )
             }
 
-            if index == blocks.indices.last {
+            if index == items.indices.last {
                 return lines
             }
 
@@ -196,6 +312,128 @@ enum StackRenderer {
         }
 
         return RenderedBlock(lines: lines)
+    }
+
+    private struct HorizontalItem {
+
+        var content: RenderedElement
+
+        var width: Int
+
+        var block: RenderedBlock? {
+            guard case .block(let block) = content else {
+                return nil
+            }
+
+            return block
+        }
+    }
+
+    private struct VerticalItem {
+
+        var content: RenderedElement
+
+        var height: Int
+
+        var block: RenderedBlock? {
+            guard case .block(let block) = content else {
+                return nil
+            }
+
+            return block
+        }
+    }
+
+    private static func horizontalItems(
+        from elements: [RenderedElement],
+        spacing: Int,
+        proposal: RenderProposal?
+    ) -> [HorizontalItem] {
+        let elements = elements.filter(\.isRenderable)
+        let spacerCount = elements.spacerCount
+        let idealWidth = elements.reduce(0) { width, element in
+            width + element.horizontalLength
+        } + spacingWidth(for: elements.count, spacing: spacing)
+        let targetWidth: Int
+        if spacerCount > 0, let columns = proposal?.columns {
+            targetWidth = max(columns, idealWidth)
+        }
+        else {
+            targetWidth = idealWidth
+        }
+
+        let spacerLengths = flexibleLengths(
+            count: spacerCount,
+            minimums: elements.spacerMinimums,
+            extra: targetWidth - idealWidth
+        )
+        var spacerIndex = 0
+        return elements.map { element in
+            switch element {
+            case .block(let block):
+                return HorizontalItem(content: element, width: block.width)
+            case .spacer:
+                let width = spacerLengths[spacerIndex]
+                spacerIndex += 1
+                return HorizontalItem(content: element, width: width)
+            }
+        }
+    }
+
+    private static func verticalItems(
+        from elements: [RenderedElement],
+        spacing: Int,
+        proposal: RenderProposal?
+    ) -> [VerticalItem] {
+        let elements = elements.filter(\.isRenderable)
+        let spacerCount = elements.spacerCount
+        let idealHeight = elements.reduce(0) { height, element in
+            height + element.verticalLength
+        } + spacingWidth(for: elements.count, spacing: spacing)
+        let targetHeight: Int
+        if spacerCount > 0, let rows = proposal?.rows {
+            targetHeight = max(rows, idealHeight)
+        }
+        else {
+            targetHeight = idealHeight
+        }
+
+        let spacerLengths = flexibleLengths(
+            count: spacerCount,
+            minimums: elements.spacerMinimums,
+            extra: targetHeight - idealHeight
+        )
+        var spacerIndex = 0
+        return elements.map { element in
+            switch element {
+            case .block(let block):
+                return VerticalItem(content: element, height: block.height)
+            case .spacer:
+                let height = spacerLengths[spacerIndex]
+                spacerIndex += 1
+                return VerticalItem(content: element, height: height)
+            }
+        }
+    }
+
+    private static func flexibleLengths(
+        count: Int,
+        minimums: [Int],
+        extra: Int
+    ) -> [Int] {
+        guard count > 0 else {
+            return []
+        }
+
+        let shared = extra / count
+        let remainder = extra % count
+        return minimums.enumerated().map { index, minimum in
+            minimum + shared + (index < remainder ? 1 : 0)
+        }
+    }
+
+    private static func spacingWidth(for count: Int, spacing: Int) -> Int {
+        max(count - 1, 0) * max(spacing, 0)
     }
 
     private static func line(
@@ -250,6 +488,63 @@ enum StackRenderer {
             return padding / 2
         case .bottom:
             return padding
+        }
+    }
+}
+
+private extension Array where Element == RenderedElement {
+
+    var spacerCount: Int {
+        filter(\.isSpacer).count
+    }
+
+    var spacerMinimums: [Int] {
+        compactMap(\.spacerMinimum)
+    }
+}
+
+private extension RenderedElement {
+
+    var horizontalLength: Int {
+        switch self {
+        case .block(let block):
+            return block.width
+        case .spacer(let minLength):
+            return minLength
+        }
+    }
+
+    var isRenderable: Bool {
+        switch self {
+        case .block(let block):
+            return !block.lines.isEmpty
+        case .spacer:
+            return true
+        }
+    }
+
+    var isSpacer: Bool {
+        guard case .spacer = self else {
+            return false
+        }
+
+        return true
+    }
+
+    var spacerMinimum: Int? {
+        guard case .spacer(let minLength) = self else {
+            return nil
+        }
+
+        return minLength
+    }
+
+    var verticalLength: Int {
+        switch self {
+        case .block(let block):
+            return block.height
+        case .spacer(let minLength):
+            return minLength
         }
     }
 }

@@ -130,6 +130,60 @@ import Testing
     #expect(ViewResolver.block(from: trailing)?.lines == ["  A", "BBB"])
 }
 
+@Test func spacerStoresNormalizedMinimumLength() {
+    #expect(Spacer().minLength == nil)
+    #expect(Spacer(minLength: 2).minLength == 2)
+    #expect(Spacer(minLength: -1).minLength == 0)
+}
+
+@Test func hStackSpacerWithoutProposalUsesZeroMinimumLength() {
+    let stack = HStack {
+        Text("A")
+        Spacer()
+        Text("B")
+    }
+
+    #expect(ViewResolver.text(from: stack) == "AB")
+}
+
+@Test func hStackSpacerFillsProposedColumns() {
+    let stack = HStack {
+        Text("A")
+        Spacer()
+        Text("B")
+    }
+
+    let block = ViewResolver.block(from: stack, in: RenderProposal(columns: 5))
+
+    #expect(block?.lines == ["A   B"])
+}
+
+@Test func hStackSpacersShareRemainingColumns() {
+    let stack = HStack {
+        Text("A")
+        Spacer()
+        Text("B")
+        Spacer()
+        Text("C")
+    }
+
+    let block = ViewResolver.block(from: stack, in: RenderProposal(columns: 8))
+
+    #expect(block?.lines == ["A   B  C"])
+}
+
+@Test func vStackSpacerFillsProposedRows() {
+    let stack = VStack {
+        Text("A")
+        Spacer()
+        Text("B")
+    }
+
+    let block = ViewResolver.block(from: stack, in: RenderProposal(rows: 5))
+
+    #expect(block?.lines == ["A", " ", " ", " ", "B"])
+}
+
 @Test func textFrameCentersInViewport() {
     let frame = TextRenderer.frame(
         for: "Hello",

@@ -74,15 +74,27 @@ struct ViewGroup: View {
 
 struct AnyViewStorage {
 
-    private let block: () -> RenderedBlock?
+    private let element: (RenderProposal?) -> RenderedElement?
 
     init<Content: View>(_ content: Content) {
-        self.block = {
-            ViewResolver.block(from: content)
+        self.element = { proposal in
+            ViewResolver.element(from: content, in: proposal)
         }
     }
 
+    func renderedElement(in proposal: RenderProposal? = nil) -> RenderedElement? {
+        element(proposal)
+    }
+
     func renderedBlock() -> RenderedBlock? {
-        block()
+        renderedBlock(in: nil)
+    }
+
+    func renderedBlock(in proposal: RenderProposal?) -> RenderedBlock? {
+        guard case .block(let block) = renderedElement(in: proposal) else {
+            return nil
+        }
+
+        return block
     }
 }
