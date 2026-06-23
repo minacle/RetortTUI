@@ -1,0 +1,24 @@
+{
+    "configurations": [
+        {
+            "type": "swift",
+            "request": "launch",
+            "args": [],
+            "cwd": "${workspaceFolder:RetortTUI}",
+            "name": "Debug RetortTUISample",
+            "target": "RetortTUISample",
+            "configuration": "debug",
+            "preLaunchTask": "swift: Build Debug RetortTUISample"
+        },
+        {
+            "type": "swift",
+            "request": "launch",
+            "args": [],
+            "cwd": "${workspaceFolder:RetortTUI}",
+            "name": "Release RetortTUISample",
+            "target": "RetortTUISample",
+            "configuration": "release",
+            "preLaunchTask": "swift: Build Release RetortTUISample"
+        }
+    ]
+}
