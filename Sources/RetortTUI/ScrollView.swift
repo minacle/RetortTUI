@@ -24,8 +24,8 @@ public enum Axis: Sendable {
     }
 }
 
-/// An edge of a scrollable content region.
-public enum Edge: Equatable, Sendable {
+/// An edge of a terminal rectangle.
+public enum Edge: Equatable, Hashable, Sendable {
 
     case top
 

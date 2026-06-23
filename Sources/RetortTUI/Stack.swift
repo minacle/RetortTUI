@@ -1,5 +1,5 @@
 /// Horizontal alignment for views arranged in a ``VStack``.
-public enum HorizontalAlignment: Sendable {
+public enum HorizontalAlignment: Equatable, Sendable {
 
     case leading
 
@@ -9,7 +9,7 @@ public enum HorizontalAlignment: Sendable {
 }
 
 /// Vertical alignment for views arranged in an ``HStack``.
-public enum VerticalAlignment: Sendable {
+public enum VerticalAlignment: Equatable, Sendable {
 
     case top
 

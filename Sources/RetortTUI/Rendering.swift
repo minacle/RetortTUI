@@ -141,6 +141,144 @@ struct RenderedBlock: Equatable, Sendable {
     var bounds: RenderedRect {
         RenderedRect(width: width, height: height)
     }
+
+    func framed(width targetWidth: Int, height targetHeight: Int, alignment: Alignment) -> RenderedBlock {
+        let targetWidth = max(targetWidth, 0)
+        let targetHeight = max(targetHeight, 0)
+        guard targetWidth > 0, targetHeight > 0 else {
+            return RenderedBlock(lines: [])
+        }
+
+        let x = horizontalOffset(
+            contentWidth: width,
+            containerWidth: targetWidth,
+            alignment: alignment.horizontal
+        )
+        let y = verticalOffset(
+            contentHeight: height,
+            containerHeight: targetHeight,
+            alignment: alignment.vertical
+        )
+        let lines = (0..<targetHeight).map { row in
+            framedLine(
+                at: row,
+                width: targetWidth,
+                x: x,
+                y: y
+            )
+        }
+
+        return RenderedBlock(
+            lines: lines,
+            cursor: framedCursor(x: x, y: y, width: targetWidth, height: targetHeight),
+            hitRegions: framedHitRegions(x: x, y: y, width: targetWidth, height: targetHeight)
+        )
+    }
+
+    func padded(by insets: EdgeInsets) -> RenderedBlock {
+        let contentWidth = width
+        let targetWidth = contentWidth + insets.horizontal
+        let blankLine = String(repeating: " ", count: targetWidth)
+        let contentLines = lines.map { line in
+            String(repeating: " ", count: insets.leading)
+                + TerminalText.slice(line, fromColumn: 0, width: contentWidth)
+                + String(repeating: " ", count: insets.trailing)
+        }
+
+        return RenderedBlock(
+            lines: Array(repeating: blankLine, count: insets.top)
+                + contentLines
+                + Array(repeating: blankLine, count: insets.bottom),
+            cursor: cursor.map {
+                RenderedCursor(row: $0.row + insets.top, column: $0.column + insets.leading)
+            },
+            hitRegions: hitRegions.map {
+                $0.offsetBy(x: insets.leading, y: insets.top)
+            }
+        )
+    }
+
+    private func framedLine(at row: Int, width targetWidth: Int, x: Int, y: Int) -> String {
+        let sourceRow = row - y
+        guard lines.indices.contains(sourceRow) else {
+            return String(repeating: " ", count: targetWidth)
+        }
+
+        let leadingPadding = max(x, 0)
+        let visibleWidth = max(targetWidth - leadingPadding, 0)
+        return String(repeating: " ", count: leadingPadding)
+            + TerminalText.slice(
+                lines[sourceRow],
+                fromColumn: max(-x, 0),
+                width: visibleWidth
+            )
+    }
+
+    private func framedCursor(
+        x: Int,
+        y: Int,
+        width targetWidth: Int,
+        height targetHeight: Int
+    ) -> RenderedCursor? {
+        guard let cursor else {
+            return nil
+        }
+
+        let row = cursor.row + y
+        let column = cursor.column + x
+        guard row >= 0,
+              row < targetHeight,
+              column >= 0,
+              column <= targetWidth else {
+            return nil
+        }
+
+        return RenderedCursor(row: row, column: min(column, targetWidth - 1))
+    }
+
+    private func framedHitRegions(
+        x: Int,
+        y: Int,
+        width targetWidth: Int,
+        height targetHeight: Int
+    ) -> [RenderedHitRegion] {
+        let bounds = RenderedRect(width: targetWidth, height: targetHeight)
+        return hitRegions.compactMap {
+            $0.offsetBy(x: x, y: y).clipped(to: bounds)
+        }
+    }
+
+    private func horizontalOffset(
+        contentWidth: Int,
+        containerWidth: Int,
+        alignment: HorizontalAlignment
+    ) -> Int {
+        let padding = containerWidth - contentWidth
+        switch alignment {
+        case .leading:
+            return 0
+        case .center:
+            return padding / 2
+        case .trailing:
+            return padding
+        }
+    }
+
+    private func verticalOffset(
+        contentHeight: Int,
+        containerHeight: Int,
+        alignment: VerticalAlignment
+    ) -> Int {
+        let padding = containerHeight - contentHeight
+        switch alignment {
+        case .top:
+            return 0
+        case .center:
+            return padding / 2
+        case .bottom:
+            return padding
+        }
+    }
 }
 
 struct RenderProposal: Equatable, Sendable {
@@ -232,7 +370,7 @@ enum ViewResolver {
             return stack.renderedBlock(in: proposal, path: path, runtime: runtime)
         }
 
-        if let modifier = view as? any FrameModifierRenderable {
+        if let modifier = view as? any LayoutModifierRenderable {
             return modifier.renderedBlock(in: proposal, path: path, runtime: runtime)
         }
 
@@ -324,7 +462,7 @@ enum ViewResolver {
             ).map { .block($0) }
         }
 
-        if let modifier = view as? any FrameModifierRenderable {
+        if let modifier = view as? any LayoutModifierRenderable {
             return modifier.renderedElement(
                 in: proposal,
                 path: path,
