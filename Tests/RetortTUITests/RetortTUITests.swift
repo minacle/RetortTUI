@@ -7,6 +7,264 @@ import Testing
     #expect(text.content == "Hello")
 }
 
+@Test func textFieldDisplaysBoundText() {
+    var value = "mayu"
+    let textField = TextField(
+        "Name",
+        text: Binding(
+            get: {
+                value
+            },
+            set: { newValue in
+                value = newValue
+            }
+        )
+    )
+
+    #expect(ViewResolver.text(from: textField) == "mayu")
+}
+
+@Test func emptyTextFieldDisplaysPromptBeforeTitle() {
+    let textField = TextField(
+        "Name",
+        text: .constant(""),
+        prompt: Text("Required")
+    )
+
+    #expect(ViewResolver.text(from: textField) == "Required")
+}
+
+@Test func emptyTextFieldDisplaysTitleWhenPromptIsAbsent() {
+    let textField = TextField("Name", text: .constant(""))
+
+    #expect(ViewResolver.text(from: textField) == "Name")
+}
+
+@Test func focusedTextFieldEditsBoundTextContinuously() {
+    let runtime = StateRuntime()
+    let view = TextFieldEditingView()
+
+    #expect(runtime.block(from: view)?.text == "Name")
+    #expect(runtime.consumeInvalidation())
+    #expect(runtime.block(from: view)?.text == "Name")
+    #expect(runtime.block(from: view)?.cursor == RenderedCursor(column: 0))
+
+    #expect(runtime.dispatch(KeyPress(key: "a", characters: "a")) == .handled)
+    #expect(runtime.consumeInvalidation())
+    #expect(runtime.block(from: view)?.text == "a")
+    #expect(runtime.block(from: view)?.cursor == RenderedCursor(column: 1))
+
+    #expect(runtime.dispatch(KeyPress(key: "b", characters: "b")) == .handled)
+    #expect(runtime.dispatch(KeyPress(key: "c", characters: "c", modifiers: .control)) == .ignored)
+    #expect(runtime.dispatch(KeyPress(key: .delete, characters: "\u{0008}")) == .handled)
+    #expect(runtime.consumeInvalidation())
+    #expect(runtime.block(from: view)?.text == "a")
+    #expect(runtime.block(from: view)?.cursor == RenderedCursor(column: 1))
+}
+
+@Test func focusedTextFieldMovesCaretWithHorizontalArrows() {
+    let runtime = StateRuntime()
+    let view = TextFieldEditingView()
+
+    _ = runtime.block(from: view)
+    _ = runtime.consumeInvalidation()
+    _ = runtime.block(from: view)
+
+    #expect(runtime.dispatch(KeyPress(key: "a", characters: "a")) == .handled)
+    #expect(runtime.dispatch(KeyPress(key: "b", characters: "b")) == .handled)
+    #expect(runtime.consumeInvalidation())
+    #expect(runtime.block(from: view)?.text == "ab")
+    #expect(runtime.block(from: view)?.cursor == RenderedCursor(column: 2))
+
+    #expect(runtime.dispatch(KeyPress(key: .leftArrow, characters: "\u{F702}")) == .handled)
+    #expect(runtime.consumeInvalidation())
+    #expect(runtime.block(from: view)?.text == "ab")
+    #expect(runtime.block(from: view)?.cursor == RenderedCursor(column: 1))
+
+    #expect(runtime.dispatch(KeyPress(key: "c", characters: "c")) == .handled)
+    #expect(runtime.consumeInvalidation())
+    #expect(runtime.block(from: view)?.text == "acb")
+    #expect(runtime.block(from: view)?.cursor == RenderedCursor(column: 2))
+
+    #expect(runtime.dispatch(KeyPress(key: .rightArrow, characters: "\u{F703}")) == .handled)
+    #expect(runtime.consumeInvalidation())
+    #expect(runtime.block(from: view)?.text == "acb")
+    #expect(runtime.block(from: view)?.cursor == RenderedCursor(column: 3))
+}
+
+@Test func focusedTextFieldCursorComposesThroughStacks() {
+    let runtime = StateRuntime()
+    let view = LabeledTextFieldEditingView()
+
+    _ = runtime.block(from: view)
+    _ = runtime.consumeInvalidation()
+    let block = runtime.block(from: view)
+
+    #expect(block?.lines == ["Label: Name"])
+    #expect(block?.cursor == RenderedCursor(column: 7))
+}
+
+@Test func focusedTextFieldCursorUsesTerminalColumnWidth() {
+    let runtime = StateRuntime()
+    let view = TextFieldEditingView()
+
+    _ = runtime.block(from: view)
+    _ = runtime.consumeInvalidation()
+    _ = runtime.block(from: view)
+
+    #expect(runtime.dispatch(KeyPress(key: "한", characters: "한")) == .handled)
+    #expect(runtime.dispatch(KeyPress(key: "A", characters: "A")) == .handled)
+    #expect(runtime.consumeInvalidation())
+    #expect(runtime.block(from: view)?.text == "한A")
+    #expect(runtime.block(from: view)?.cursor == RenderedCursor(column: 3))
+}
+
+@Test func focusedTextFieldScrollsHorizontallyToKeepCaretVisible() {
+    let runtime = StateRuntime()
+    let view = TextFieldEditingView().frame(width: 3)
+
+    _ = runtime.block(from: view)
+    _ = runtime.consumeInvalidation()
+    _ = runtime.block(from: view)
+
+    for character in "abcd" {
+        #expect(
+            runtime.dispatch(
+                KeyPress(key: KeyEquivalent(character), characters: String(character))
+            ) == .handled
+        )
+    }
+
+    #expect(runtime.consumeInvalidation())
+    #expect(runtime.block(from: view)?.lines == ["cd "])
+    #expect(runtime.block(from: view)?.cursor == RenderedCursor(column: 2))
+
+    #expect(runtime.dispatch(KeyPress(key: .leftArrow, characters: "\u{F702}")) == .handled)
+    #expect(runtime.dispatch(KeyPress(key: .leftArrow, characters: "\u{F702}")) == .handled)
+    #expect(runtime.dispatch(KeyPress(key: .leftArrow, characters: "\u{F702}")) == .handled)
+    #expect(runtime.consumeInvalidation())
+    #expect(runtime.block(from: view)?.lines == ["bcd"])
+    #expect(runtime.block(from: view)?.cursor == RenderedCursor(column: 0))
+}
+
+@Test func focusedTextFieldScrollsWideTextByTerminalColumns() {
+    let runtime = StateRuntime()
+    let view = TextFieldEditingView().frame(width: 3)
+
+    _ = runtime.block(from: view)
+    _ = runtime.consumeInvalidation()
+    _ = runtime.block(from: view)
+
+    #expect(runtime.dispatch(KeyPress(key: "한", characters: "한")) == .handled)
+    #expect(runtime.dispatch(KeyPress(key: "A", characters: "A")) == .handled)
+    #expect(runtime.dispatch(KeyPress(key: "B", characters: "B")) == .handled)
+    #expect(runtime.consumeInvalidation())
+    #expect(runtime.block(from: view)?.lines == ["AB "])
+    #expect(runtime.block(from: view)?.cursor == RenderedCursor(column: 2))
+}
+
+@Test func focusedTextFieldDoesNotScrollExactWideTextFit() {
+    let runtime = StateRuntime()
+    let text = String(repeating: "ㅁ", count: 16)
+    let view = TextFieldInitialTextView(text: text)
+        .frame(width: 32)
+
+    _ = runtime.block(from: view)
+    _ = runtime.consumeInvalidation()
+    let block = runtime.block(from: view)
+
+    #expect(block?.lines == [String(repeating: "ㅁ", count: 15) + "  "])
+    #expect(block?.cursor == RenderedCursor(column: 30))
+}
+
+@Test func focusedTextFieldScrollsRightWhenNextWideCharacterIsHidden() {
+    let runtime = StateRuntime()
+    let view = TextFieldInitialTextView(text: "ㄱㄴㄷㄹㅁ")
+        .frame(width: 6)
+
+    _ = runtime.block(from: view)
+    _ = runtime.consumeInvalidation()
+    _ = runtime.block(from: view)
+
+    #expect(runtime.dispatch(KeyPress(key: .home, characters: "\u{F729}")) == .handled)
+    #expect(runtime.consumeInvalidation())
+    #expect(runtime.block(from: view)?.lines == ["ㄱㄴㄷ"])
+
+    for _ in 0..<3 {
+        #expect(runtime.dispatch(KeyPress(key: .rightArrow, characters: "\u{F703}")) == .handled)
+    }
+
+    #expect(runtime.consumeInvalidation())
+    #expect(runtime.block(from: view)?.lines == ["ㄴㄷㄹ"])
+    #expect(runtime.block(from: view)?.cursor == RenderedCursor(column: 4))
+}
+
+@Test func focusedTextFieldDeletionDoesNotScrollIntoWideCharacterMiddle() {
+    let runtime = StateRuntime()
+    let text = "ㄱㄴㄷㄹㅁㅂㅅㅇㅈㅊㅋㅌㅍㅎㄲㄸㅃㅆ"
+    let view = TextFieldInitialTextView(text: text)
+        .frame(width: 32)
+
+    _ = runtime.block(from: view)
+    _ = runtime.consumeInvalidation()
+    #expect(runtime.block(from: view)?.lines == ["ㄹㅁㅂㅅㅇㅈㅊㅋㅌㅍㅎㄲㄸㅃㅆ  "])
+
+    #expect(runtime.dispatch(KeyPress(key: .delete, characters: "\u{0008}")) == .handled)
+    #expect(runtime.consumeInvalidation())
+
+    let block = runtime.block(from: view)
+    #expect(block?.lines == ["ㄷㄹㅁㅂㅅㅇㅈㅊㅋㅌㅍㅎㄲㄸㅃ  "])
+    #expect(block?.cursor == RenderedCursor(column: 30))
+}
+
+@Test func framedTextFieldInsertionAtTrailingCaretScrollsBeforeTrailingSibling() {
+    let runtime = StateRuntime()
+    let text = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcde"
+    let view = DelimitedTextFieldView(text: text)
+
+    _ = runtime.block(from: view)
+    _ = runtime.consumeInvalidation()
+    _ = runtime.block(from: view)
+
+    #expect(runtime.dispatch(KeyPress(key: "f", characters: "f")) == .handled)
+    #expect(runtime.consumeInvalidation())
+    let block = runtime.block(from: view)
+
+    #expect(block?.lines == ["[BCDEFGHIJKLMNOPQRSTUVWXYZabcdef ]"])
+    #expect(block?.cursor == RenderedCursor(column: 32))
+}
+
+@Test func focusedTextFieldDoesNotInsertVerticalArrowCharacters() {
+    let runtime = StateRuntime()
+    let view = TextFieldEditingView()
+
+    _ = runtime.block(from: view)
+    _ = runtime.consumeInvalidation()
+    _ = runtime.block(from: view)
+
+    #expect(runtime.dispatch(KeyPress(key: "a", characters: "a")) == .handled)
+    #expect(runtime.dispatch(KeyPress(key: .upArrow, characters: "\u{F700}")) == .ignored)
+    #expect(runtime.dispatch(KeyPress(key: .downArrow, characters: "\u{F701}")) == .ignored)
+    #expect(runtime.consumeInvalidation())
+    #expect(runtime.block(from: view)?.text == "a")
+    #expect(runtime.block(from: view)?.cursor == RenderedCursor(column: 1))
+}
+
+@Test func textFieldSubmitsWithReturnKey() {
+    let runtime = StateRuntime()
+    let view = TextFieldSubmitView()
+
+    #expect(runtime.block(from: view)?.lines == ["Name", "none"])
+    _ = runtime.consumeInvalidation()
+    _ = runtime.block(from: view)
+
+    #expect(runtime.dispatch(KeyPress(key: "a", characters: "a")) == .handled)
+    #expect(runtime.dispatch(KeyPress(key: .return, characters: "\r")) == .handled)
+    #expect(runtime.consumeInvalidation())
+    #expect(runtime.block(from: view)?.lines == ["a", "a"])
+    #expect(runtime.block(from: view)?.cursor == RenderedCursor(column: 1))
+}
+
 @Test func compositeViewResolvesToTextBody() {
     struct ContentView: View {
         var body: some View {
@@ -111,6 +369,12 @@ import Testing
     #expect(ViewResolver.block(from: bottom)?.lines == ["A  ", "B  ", "C X"])
 }
 
+@Test func renderedBlockWidthUsesTerminalColumns() {
+    let block = ViewResolver.block(from: Text("한A"))
+
+    #expect(block?.width == 3)
+}
+
 @Test func vStackAlignsChildrenHorizontally() {
     let leading = VStack(alignment: .leading) {
         Text("A")
@@ -128,6 +392,15 @@ import Testing
     #expect(ViewResolver.block(from: leading)?.lines == ["A  ", "BBB"])
     #expect(ViewResolver.block(from: center)?.lines == [" A ", "BBB"])
     #expect(ViewResolver.block(from: trailing)?.lines == ["  A", "BBB"])
+}
+
+@Test func vStackAlignsWideTextByTerminalColumns() {
+    let stack = VStack(alignment: .trailing) {
+        Text("한")
+        Text("ABC")
+    }
+
+    #expect(ViewResolver.block(from: stack)?.lines == [" 한", "ABC"])
 }
 
 @Test func spacerStoresNormalizedMinimumLength() {
@@ -330,6 +603,15 @@ import Testing
     #expect(block?.lines == ["AB  ", "    "])
 }
 
+@Test func frameClipsWideTextByTerminalColumns() {
+    let view = Text("한A").frame(width: 2, height: 1)
+
+    let block = ViewResolver.block(from: view)
+
+    #expect(block?.lines == ["한"])
+    #expect(block?.width == 2)
+}
+
 @Test func frameProvidesViewportToNestedScrollView() {
     let view = ScrollView([.horizontal, .vertical]) {
         VStack {
@@ -428,7 +710,7 @@ import Testing
         in: TerminalViewportSize(columns: 10, rows: 5)
     )
 
-    #expect(output == "\u{001B}[2J\u{001B}[3;3HHello")
+    #expect(output == "\u{001B}[2J\u{001B}[3;3HHello\u{001B}[?25l")
 }
 
 @Test func screenOutputCentersMultipleLines() {
@@ -437,7 +719,34 @@ import Testing
         in: TerminalViewportSize(columns: 10, rows: 5)
     )
 
-    #expect(output == "\u{001B}[2J\u{001B}[2;5HA\u{001B}[3;5HB")
+    #expect(output == "\u{001B}[2J\u{001B}[2;5HA\u{001B}[3;5HB\u{001B}[?25l")
+}
+
+@Test func screenOutputShowsAndPositionsRenderedCursor() {
+    let output = TextRenderer.screen(
+        for: RenderedBlock(lines: ["Hello"], cursor: RenderedCursor(column: 2)),
+        in: TerminalViewportSize(columns: 10, rows: 5)
+    )
+
+    #expect(output == "\u{001B}[2J\u{001B}[3;3HHello\u{001B}[?25h\u{001B}[3;5H")
+}
+
+@Test func screenOutputClipsLinesToViewportWidth() {
+    let output = TextRenderer.screen(
+        for: RenderedBlock(lines: ["ABCDE"]),
+        in: TerminalViewportSize(columns: 3, rows: 1)
+    )
+
+    #expect(output == "\u{001B}[2J\u{001B}[1;1HABC\u{001B}[?25l")
+}
+
+@Test func screenOutputPositionsRenderedCursorAfterWideText() {
+    let output = TextRenderer.screen(
+        for: RenderedBlock(lines: ["한A"], cursor: RenderedCursor(column: 3)),
+        in: TerminalViewportSize(columns: 10, rows: 5)
+    )
+
+    #expect(output == "\u{001B}[2J\u{001B}[3;4H한A\u{001B}[?25h\u{001B}[3;7H")
 }
 
 @Test func terminalSessionSequencesAreStable() {
@@ -1214,6 +1523,82 @@ private struct KeyPressStateMutationView: View {
                 count += 1
                 return .handled
             }
+    }
+}
+
+private struct TextFieldEditingView: View {
+
+    @State var text = ""
+
+    @FocusState var isFocused = true
+
+    var body: some View {
+        TextField("Name", text: $text)
+            .focused($isFocused)
+    }
+}
+
+private struct TextFieldInitialTextView: View {
+
+    @State var text: String
+
+    @FocusState var isFocused = true
+
+    var body: some View {
+        TextField("Name", text: $text)
+            .focused($isFocused)
+    }
+}
+
+private struct DelimitedTextFieldView: View {
+
+    @State var text: String
+
+    @FocusState var isFocused = true
+
+    var body: some View {
+        HStack(spacing: 0) {
+            Text("[")
+            TextField("Name", text: $text)
+                .focused($isFocused)
+                .frame(width: 32)
+            Text("]")
+        }
+    }
+}
+
+private struct LabeledTextFieldEditingView: View {
+
+    @State var text = ""
+
+    @FocusState var isFocused = true
+
+    var body: some View {
+        HStack(spacing: 1) {
+            Text("Label:")
+            TextField("Name", text: $text)
+                .focused($isFocused)
+        }
+    }
+}
+
+private struct TextFieldSubmitView: View {
+
+    @State var text = ""
+
+    @State var submitted = "none"
+
+    @FocusState var isFocused = true
+
+    var body: some View {
+        VStack {
+            TextField("Name", text: $text)
+                .focused($isFocused)
+                .onSubmit {
+                    submitted = text
+                }
+            Text(submitted)
+        }
     }
 }
 

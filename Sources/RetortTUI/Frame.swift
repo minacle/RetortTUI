@@ -54,10 +54,32 @@ struct FrameView<Content: View>: View, FrameModifierRenderable {
                 return blankLine
             }
 
-            return block.lines[row].slice(from: 0, length: targetWidth)
+            return TerminalText.slice(block.lines[row], fromColumn: 0, width: targetWidth)
         }
 
-        return RenderedBlock(lines: lines)
+        return RenderedBlock(
+            lines: lines,
+            cursor: frameCursor(block.cursor, width: targetWidth, height: targetHeight)
+        )
+    }
+
+    private func frameCursor(
+        _ cursor: RenderedCursor?,
+        width: Int,
+        height: Int
+    ) -> RenderedCursor? {
+        guard let cursor,
+              cursor.row >= 0,
+              cursor.row < height,
+              cursor.column >= 0,
+              cursor.column <= width else {
+            return nil
+        }
+
+        return RenderedCursor(
+            row: cursor.row,
+            column: min(cursor.column, width - 1)
+        )
     }
 }
 
@@ -85,15 +107,5 @@ public extension View {
             width: width.map { max($0, 0) },
             height: height.map { max($0, 0) }
         )
-    }
-}
-
-private extension String {
-
-    func slice(from offset: Int, length: Int) -> String {
-        let start = index(startIndex, offsetBy: min(offset, count))
-        let end = index(start, offsetBy: min(length, distance(from: start, to: endIndex)))
-        let slice = String(self[start..<end])
-        return slice + String(repeating: " ", count: max(length - slice.count, 0))
     }
 }

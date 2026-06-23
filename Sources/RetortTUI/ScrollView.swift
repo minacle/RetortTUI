@@ -303,7 +303,7 @@ private enum ScrollPositionContext {
     }
 }
 
-private enum ScrollViewRenderer {
+enum ScrollViewRenderer {
 
     struct Result {
 
@@ -332,21 +332,68 @@ private enum ScrollViewRenderer {
         )
         let x = axes.contains(.horizontal) ? point.x : 0
         let y = axes.contains(.vertical) ? point.y : 0
-        let clampedX = min(x, max(content.width - width, 0))
+        let clampedX = min(x, maxHorizontalOffset(for: content, width: width))
         let clampedY = min(y, max(content.height - height, 0))
-        let paddedLines = content.lines.map { $0.padded(toWidth: content.width) }
+        let paddedLines = content.lines.map {
+            TerminalText.padded($0, toWidth: content.width)
+        }
         let blankLine = String(repeating: " ", count: content.width)
 
         let lines = (0..<height).map { row -> String in
             let sourceRow = clampedY + row
             let line = sourceRow < paddedLines.count ? paddedLines[sourceRow] : blankLine
-            return line.slice(from: clampedX, length: width)
+            return TerminalText.slice(line, fromColumn: clampedX, width: width)
         }
 
         return Result(
-            block: RenderedBlock(lines: lines),
+            block: RenderedBlock(
+                lines: lines,
+                cursor: cursor(
+                    from: content.cursor,
+                    x: clampedX,
+                    y: clampedY,
+                    width: width,
+                    height: height,
+                    constrainToBounds: proposal?.columns != nil
+                )
+            ),
             point: ScrollPoint(x: clampedX, y: clampedY)
         )
+    }
+
+    private static func cursor(
+        from cursor: RenderedCursor?,
+        x: Int,
+        y: Int,
+        width: Int,
+        height: Int,
+        constrainToBounds: Bool
+    ) -> RenderedCursor? {
+        guard let cursor else {
+            return nil
+        }
+
+        let row = cursor.row - y
+        let column = cursor.column - x
+        guard row >= 0, row < height, column >= 0, column <= width else {
+            return nil
+        }
+
+        return RenderedCursor(
+            row: row,
+            column: constrainToBounds ? min(column, width - 1) : column
+        )
+    }
+
+    private static func maxHorizontalOffset(for content: RenderedBlock, width: Int) -> Int {
+        let cursorAllowance = content.cursor == nil || content.width < width ? 0 : 1
+        var offset = max(content.width - width + cursorAllowance, 0)
+        while offset > 0 && content.lines.contains(where: { line in
+            !TerminalText.isCharacterBoundary(line, atColumn: offset)
+        }) {
+            offset += 1
+        }
+        return offset
     }
 
     private static func resolvedPoint(
@@ -371,19 +418,5 @@ private enum ScrollViewRenderer {
         case nil:
             return ScrollPoint()
         }
-    }
-}
-
-private extension String {
-
-    func padded(toWidth width: Int) -> String {
-        self + String(repeating: " ", count: max(width - count, 0))
-    }
-
-    func slice(from offset: Int, length: Int) -> String {
-        let start = index(startIndex, offsetBy: min(offset, count))
-        let end = index(start, offsetBy: min(length, distance(from: start, to: endIndex)))
-        let slice = String(self[start..<end])
-        return slice + String(repeating: " ", count: max(length - slice.count, 0))
     }
 }

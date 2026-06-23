@@ -21,16 +21,35 @@ struct TextFrame: Equatable, Sendable {
     var column: Int
 }
 
+struct RenderedCursor: Equatable, Sendable {
+
+    var row: Int
+
+    var column: Int
+
+    init(row: Int = 0, column: Int = 0) {
+        self.row = max(row, 0)
+        self.column = max(column, 0)
+    }
+}
+
 struct RenderedBlock: Equatable, Sendable {
 
     var lines: [String]
+
+    var cursor: RenderedCursor?
+
+    init(lines: [String], cursor: RenderedCursor? = nil) {
+        self.lines = lines
+        self.cursor = cursor
+    }
 
     var text: String {
         lines.joined(separator: "\n")
     }
 
     var width: Int {
-        lines.map(\.count).max() ?? 0
+        lines.map(TerminalText.columnWidth).max() ?? 0
     }
 
     var height: Int {
@@ -100,6 +119,10 @@ enum ViewResolver {
             return scroll.renderedBlock(in: proposal, path: path, runtime: runtime)
         }
 
+        if let textField = view as? any TextFieldRenderable {
+            return textField.renderedBlock(in: proposal, path: path, runtime: runtime)
+        }
+
         if let group = view as? ViewGroup {
             return StackRenderer.vertical(
                 group.elements.enumerated().compactMap { index, element in
@@ -132,6 +155,10 @@ enum ViewResolver {
         }
 
         if let modifier = view as? any InputModifierRenderable {
+            return modifier.renderedBlock(in: proposal, path: path, runtime: runtime)
+        }
+
+        if let modifier = view as? any SubmitModifierRenderable {
             return modifier.renderedBlock(in: proposal, path: path, runtime: runtime)
         }
 
@@ -168,6 +195,14 @@ enum ViewResolver {
 
         if let scroll = view as? any ScrollRenderable {
             return scroll.renderedBlock(
+                in: proposal,
+                path: path,
+                runtime: runtime
+            ).map { .block($0) }
+        }
+
+        if let textField = view as? any TextFieldRenderable {
+            return textField.renderedBlock(
                 in: proposal,
                 path: path,
                 runtime: runtime
@@ -216,6 +251,14 @@ enum ViewResolver {
         }
 
         if let modifier = view as? any InputModifierRenderable {
+            return modifier.renderedElement(
+                in: proposal,
+                path: path,
+                runtime: runtime
+            )
+        }
+
+        if let modifier = view as? any SubmitModifierRenderable {
             return modifier.renderedElement(
                 in: proposal,
                 path: path,
@@ -278,11 +321,28 @@ enum TextRenderer {
         let frame = frame(for: block, in: viewport)
         return TerminalControl.clearScreenSequence
             + block.lines.enumerated().map { offset, line in
-                TerminalControl.cursorPositionSequence(
+                let availableColumns = viewport.columns - frame.column + 1
+                return TerminalControl.cursorPositionSequence(
                     row: frame.row + offset,
                     column: frame.column
-                ) + line
+                ) + TerminalText.prefix(line, maxWidth: availableColumns)
             }.joined()
+            + cursorSequence(for: block, in: frame, viewport: viewport)
+    }
+
+    private static func cursorSequence(
+        for block: RenderedBlock,
+        in frame: TextFrame,
+        viewport: TerminalViewportSize
+    ) -> String {
+        guard let cursor = block.cursor else {
+            return TerminalControl.hideCursorSequence
+        }
+
+        let row = min(max(frame.row + cursor.row, 1), viewport.rows)
+        let column = min(max(frame.column + cursor.column, 1), viewport.columns)
+        return TerminalControl.showCursorSequence
+            + TerminalControl.cursorPositionSequence(row: row, column: column)
     }
 }
 
@@ -414,7 +474,10 @@ enum StackRenderer {
             }.joined(separator: gap)
         }
 
-        return RenderedBlock(lines: lines)
+        return RenderedBlock(
+            lines: lines,
+            cursor: horizontalCursor(from: items, height: height, alignment: alignment)
+        )
     }
 
     static func vertical(
@@ -451,12 +514,17 @@ enum StackRenderer {
             return lines + gap
         }
 
-        return RenderedBlock(lines: lines)
+        return RenderedBlock(
+            lines: lines,
+            cursor: verticalCursor(from: items, width: width, alignment: alignment)
+        )
     }
 
     private struct HorizontalItem {
 
         var content: RenderedElement
+
+        var x: Int
 
         var width: Int
 
@@ -472,6 +540,8 @@ enum StackRenderer {
     private struct VerticalItem {
 
         var content: RenderedElement
+
+        var y: Int
 
         var height: Int
 
@@ -508,14 +578,19 @@ enum StackRenderer {
             extra: targetWidth - idealWidth
         )
         var spacerIndex = 0
+        var x = 0
         return elements.map { element in
             switch element {
             case .block(let block):
-                return HorizontalItem(content: element, width: block.width)
+                let item = HorizontalItem(content: element, x: x, width: block.width)
+                x += block.width + max(spacing, 0)
+                return item
             case .spacer:
                 let width = spacerLengths[spacerIndex]
                 spacerIndex += 1
-                return HorizontalItem(content: element, width: width)
+                let item = HorizontalItem(content: element, x: x, width: width)
+                x += width + max(spacing, 0)
+                return item
             }
         }
     }
@@ -544,16 +619,67 @@ enum StackRenderer {
             extra: targetHeight - idealHeight
         )
         var spacerIndex = 0
+        var y = 0
         return elements.map { element in
             switch element {
             case .block(let block):
-                return VerticalItem(content: element, height: block.height)
+                let item = VerticalItem(content: element, y: y, height: block.height)
+                y += block.height + max(spacing, 0)
+                return item
             case .spacer:
                 let height = spacerLengths[spacerIndex]
                 spacerIndex += 1
-                return VerticalItem(content: element, height: height)
+                let item = VerticalItem(content: element, y: y, height: height)
+                y += height + max(spacing, 0)
+                return item
             }
         }
+    }
+
+    private static func horizontalCursor(
+        from items: [HorizontalItem],
+        height: Int,
+        alignment: VerticalAlignment
+    ) -> RenderedCursor? {
+        for item in items {
+            guard let block = item.block, let cursor = block.cursor else {
+                continue
+            }
+
+            return RenderedCursor(
+                row: verticalOffset(
+                    contentHeight: block.height,
+                    containerHeight: height,
+                    alignment: alignment
+                ) + cursor.row,
+                column: item.x + cursor.column
+            )
+        }
+
+        return nil
+    }
+
+    private static func verticalCursor(
+        from items: [VerticalItem],
+        width: Int,
+        alignment: HorizontalAlignment
+    ) -> RenderedCursor? {
+        for item in items {
+            guard let block = item.block, let cursor = block.cursor else {
+                continue
+            }
+
+            return RenderedCursor(
+                row: item.y + cursor.row,
+                column: horizontalOffset(
+                    contentWidth: block.width,
+                    containerWidth: width,
+                    alignment: alignment
+                ) + cursor.column
+            )
+        }
+
+        return nil
     }
 
     private static func flexibleLengths(
@@ -600,7 +726,7 @@ enum StackRenderer {
         alignedBy alignment: HorizontalAlignment,
         in width: Int
     ) -> String {
-        let padding = max(width - line.count, 0)
+        let padding = max(width - TerminalText.columnWidth(line), 0)
         switch alignment {
         case .leading:
             return line + String(repeating: " ", count: padding)
@@ -612,6 +738,22 @@ enum StackRenderer {
                 + String(repeating: " ", count: trailing)
         case .trailing:
             return String(repeating: " ", count: padding) + line
+        }
+    }
+
+    private static func horizontalOffset(
+        contentWidth: Int,
+        containerWidth: Int,
+        alignment: HorizontalAlignment
+    ) -> Int {
+        let padding = max(containerWidth - contentWidth, 0)
+        switch alignment {
+        case .leading:
+            return 0
+        case .center:
+            return padding / 2
+        case .trailing:
+            return padding
         }
     }
 
@@ -692,6 +834,6 @@ private extension RenderedElement {
 private extension String {
 
     func padded(toWidth width: Int) -> String {
-        self + String(repeating: " ", count: max(width - count, 0))
+        TerminalText.padded(self, toWidth: width)
     }
 }

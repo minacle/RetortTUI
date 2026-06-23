@@ -184,6 +184,8 @@ final class StateRuntime {
 
     private let input = InputRuntime()
 
+    private var textFieldCursors: [[Int]: TextFieldCursor] = [:]
+
     private var invalidated = false
 
     private var focusGeneration = 0
@@ -195,7 +197,9 @@ final class StateRuntime {
         focus.beginRender()
         input.beginRender()
         defer {
-            focus.finishRender()
+            if focus.finishRender() {
+                invalidated = true
+            }
         }
 
         return ViewResolver.block(from: view, in: proposal, path: [], runtime: self)
@@ -208,7 +212,9 @@ final class StateRuntime {
         focus.beginRender()
         input.beginRender()
         defer {
-            focus.finishRender()
+            if focus.finishRender() {
+                invalidated = true
+            }
         }
 
         return ViewResolver.element(from: view, in: proposal, path: [], runtime: self)
@@ -279,6 +285,24 @@ final class StateRuntime {
 
     func registerKeyPressHandler(_ handler: KeyPressHandler, at path: [Int]) {
         input.register(handler, at: path)
+    }
+
+    func isFocused(at path: [Int]) -> Bool {
+        focus.activePath == path
+    }
+
+    func textFieldCursor(at path: [Int], initialOffset: Int) -> TextFieldCursor {
+        if let cursor = textFieldCursors[path] {
+            return cursor
+        }
+
+        let cursor = TextFieldCursor(initialOffset: initialOffset) {
+            [weak self] in
+
+            self?.invalidated = true
+        }
+        textFieldCursors[path] = cursor
+        return cursor
     }
 
     func dispatch(_ keyPress: KeyPress) -> KeyPress.Result {
@@ -671,7 +695,7 @@ private final class FocusRuntime {
         allAttachments.append(attachment)
     }
 
-    func finishRender() {
+    func finishRender() -> Bool {
         let candidates = pathsInRenderOrder.compactMap { path -> Candidate? in
             guard focusablePaths.contains(path),
                   !disabledPaths.contains(path),
@@ -683,8 +707,10 @@ private final class FocusRuntime {
             return Candidate(path: path, attachments: attachments)
         }
 
+        let previousActivePath = activePath
         activePath = activePath(for: candidates)
         syncAttachments(for: candidates.first { $0.path == activePath })
+        return activePath != previousActivePath
     }
 
     private func activePath(for candidates: [Candidate]) -> [Int]? {
