@@ -29,13 +29,7 @@ struct AppRunner<Application: App> {
             return
         }
 
-        let viewport = TerminalControl.currentTerminalSize()
-        guard let block = ViewResolver.block(
-            from: root.root,
-            in: RenderProposal(viewport)
-        ) else {
-            return
-        }
+        let runtime = StateRuntime()
 
         let session = try TerminalSession()
         try session.start()
@@ -43,9 +37,34 @@ struct AppRunner<Application: App> {
             session.stop()
         }
 
-        render(block, in: viewport)
+        render(root, using: runtime)
 
-        while TerminalControl.readInput() != .quit {}
+        while true {
+            switch TerminalControl.readInput() {
+            case .quit:
+                return
+            case .keyPress(let keyPress):
+                _ = runtime.dispatch(keyPress)
+            case .none:
+                break
+            }
+
+            if runtime.consumeInvalidation() {
+                render(root, using: runtime)
+            }
+        }
+    }
+
+    private func render(_ root: any RootScene, using runtime: StateRuntime) {
+        let viewport = TerminalControl.currentTerminalSize()
+        guard let block = runtime.block(
+            from: root.root,
+            in: RenderProposal(viewport)
+        ) else {
+            return
+        }
+
+        render(block, in: viewport)
     }
 
     private func render(_ block: RenderedBlock, in viewport: TerminalViewportSize) {

@@ -74,16 +74,29 @@ struct ViewGroup: View {
 
 struct AnyViewStorage {
 
-    private let element: (RenderProposal?) -> RenderedElement?
+    private let element: (RenderProposal?, [Int], StateRuntime?) -> RenderedElement?
 
     init<Content: View>(_ content: Content) {
-        self.element = { proposal in
-            ViewResolver.element(from: content, in: proposal)
+        self.element = { proposal, path, runtime in
+            ViewResolver.element(
+                from: content,
+                in: proposal,
+                path: path,
+                runtime: runtime
+            )
         }
     }
 
     func renderedElement(in proposal: RenderProposal? = nil) -> RenderedElement? {
-        element(proposal)
+        renderedElement(in: proposal, path: [], runtime: nil)
+    }
+
+    func renderedElement(
+        in proposal: RenderProposal?,
+        path: [Int],
+        runtime: StateRuntime?
+    ) -> RenderedElement? {
+        element(proposal, path, runtime)
     }
 
     func renderedBlock() -> RenderedBlock? {

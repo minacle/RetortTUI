@@ -75,6 +75,15 @@ enum ViewResolver {
         from view: Content,
         in proposal: RenderProposal?
     ) -> RenderedBlock? {
+        block(from: view, in: proposal, path: [], runtime: nil)
+    }
+
+    static func block<Content: View>(
+        from view: Content,
+        in proposal: RenderProposal?,
+        path: [Int],
+        runtime: StateRuntime?
+    ) -> RenderedBlock? {
         if let text = view as? Text {
             return RenderedBlock(lines: [text.content])
         }
@@ -89,8 +98,12 @@ enum ViewResolver {
 
         if let group = view as? ViewGroup {
             return StackRenderer.vertical(
-                group.elements.compactMap {
-                    $0.renderedElement(in: proposal)
+                group.elements.enumerated().compactMap { index, element in
+                    element.renderedElement(
+                        in: proposal,
+                        path: path + [index],
+                        runtime: runtime
+                    )
                 },
                 alignment: .leading,
                 spacing: 0,
@@ -99,15 +112,35 @@ enum ViewResolver {
         }
 
         if let stack = view as? any StackRenderable {
-            return stack.renderedBlock(in: proposal)
+            return stack.renderedBlock(in: proposal, path: path, runtime: runtime)
         }
 
-        return block(from: view.body, in: proposal)
+        if let modifier = view as? any FocusModifierRenderable {
+            return modifier.renderedBlock(in: proposal, path: path, runtime: runtime)
+        }
+
+        if let modifier = view as? any InputModifierRenderable {
+            return modifier.renderedBlock(in: proposal, path: path, runtime: runtime)
+        }
+
+        let body = runtime?.withView(at: path) {
+            view.body
+        } ?? view.body
+        return block(from: body, in: proposal, path: path + [0], runtime: runtime)
     }
 
     static func element<Content: View>(
         from view: Content,
         in proposal: RenderProposal?
+    ) -> RenderedElement? {
+        element(from: view, in: proposal, path: [], runtime: nil)
+    }
+
+    static func element<Content: View>(
+        from view: Content,
+        in proposal: RenderProposal?,
+        path: [Int],
+        runtime: StateRuntime?
     ) -> RenderedElement? {
         if let text = view as? Text {
             return .block(RenderedBlock(lines: [text.content]))
@@ -122,14 +155,42 @@ enum ViewResolver {
         }
 
         if let group = view as? ViewGroup {
-            return block(from: group, in: proposal).map { .block($0) }
+            return block(
+                from: group,
+                in: proposal,
+                path: path,
+                runtime: runtime
+            ).map { .block($0) }
         }
 
         if let stack = view as? any StackRenderable {
-            return stack.renderedBlock(in: proposal).map { .block($0) }
+            return stack.renderedBlock(
+                in: proposal,
+                path: path,
+                runtime: runtime
+            ).map { .block($0) }
         }
 
-        return element(from: view.body, in: proposal)
+        if let modifier = view as? any FocusModifierRenderable {
+            return modifier.renderedElement(
+                in: proposal,
+                path: path,
+                runtime: runtime
+            )
+        }
+
+        if let modifier = view as? any InputModifierRenderable {
+            return modifier.renderedElement(
+                in: proposal,
+                path: path,
+                runtime: runtime
+            )
+        }
+
+        let body = runtime?.withView(at: path) {
+            view.body
+        } ?? view.body
+        return element(from: body, in: proposal, path: path + [0], runtime: runtime)
     }
 
     private static func block(
@@ -192,15 +253,34 @@ enum TextRenderer {
 protocol StackRenderable {
 
     func renderedBlock(in proposal: RenderProposal?) -> RenderedBlock?
+
+    func renderedBlock(
+        in proposal: RenderProposal?,
+        path: [Int],
+        runtime: StateRuntime?
+    ) -> RenderedBlock?
+}
+
+extension StackRenderable {
+
+    func renderedBlock(in proposal: RenderProposal?) -> RenderedBlock? {
+        renderedBlock(in: proposal, path: [], runtime: nil)
+    }
 }
 
 extension HStack: StackRenderable {
 
-    func renderedBlock(in proposal: RenderProposal?) -> RenderedBlock? {
+    func renderedBlock(
+        in proposal: RenderProposal?,
+        path: [Int],
+        runtime: StateRuntime?
+    ) -> RenderedBlock? {
         StackRenderer.horizontal(
             ViewResolver.elements(
                 from: content,
-                in: RenderProposal(rows: proposal?.rows)
+                in: RenderProposal(rows: proposal?.rows),
+                path: path + [0],
+                runtime: runtime
             ),
             alignment: alignment,
             spacing: spacing,
@@ -211,11 +291,17 @@ extension HStack: StackRenderable {
 
 extension VStack: StackRenderable {
 
-    func renderedBlock(in proposal: RenderProposal?) -> RenderedBlock? {
+    func renderedBlock(
+        in proposal: RenderProposal?,
+        path: [Int],
+        runtime: StateRuntime?
+    ) -> RenderedBlock? {
         StackRenderer.vertical(
             ViewResolver.elements(
                 from: content,
-                in: RenderProposal(columns: proposal?.columns)
+                in: RenderProposal(columns: proposal?.columns),
+                path: path + [0],
+                runtime: runtime
             ),
             alignment: alignment,
             spacing: spacing,
@@ -238,13 +324,31 @@ extension ViewResolver {
         from view: Content,
         in proposal: RenderProposal?
     ) -> [RenderedElement] {
+        elements(from: view, in: proposal, path: [], runtime: nil)
+    }
+
+    static func elements<Content: View>(
+        from view: Content,
+        in proposal: RenderProposal?,
+        path: [Int],
+        runtime: StateRuntime?
+    ) -> [RenderedElement] {
         if let group = view as? ViewGroup {
-            return group.elements.compactMap {
-                $0.renderedElement(in: proposal)
+            return group.elements.enumerated().compactMap { index, element in
+                element.renderedElement(
+                    in: proposal,
+                    path: path + [index],
+                    runtime: runtime
+                )
             }
         }
 
-        return element(from: view, in: proposal).map { [$0] } ?? []
+        return element(
+            from: view,
+            in: proposal,
+            path: path,
+            runtime: runtime
+        ).map { [$0] } ?? []
     }
 }
 
