@@ -1,3 +1,4 @@
+import Foundation
 import Testing
 @testable import RetortTUI
 
@@ -409,6 +410,101 @@ import Testing
     #expect(Spacer(minLength: -1).minLength == 0)
 }
 
+@Test func geometryValuesNormalizeNegativeComponents() {
+    let size = GeometrySize(columns: -1, rows: -2)
+    let point = GeometryPoint(column: -3, row: -4)
+    let frame = GeometryFrame(origin: point, size: size)
+
+    #expect(size == GeometrySize())
+    #expect(point == GeometryPoint())
+    #expect(frame == GeometryFrame())
+}
+
+@Test func geometryReaderPassesProposedSizeToProxy() {
+    let reader = GeometryReader { proxy in
+        Text("\(proxy.size.columns)x\(proxy.size.rows)")
+    }
+
+    let block = ViewResolver.block(
+        from: reader,
+        in: RenderProposal(columns: 5, rows: 2)
+    )
+
+    #expect(block?.lines == ["5x2  ", "     "])
+}
+
+@Test func geometryReaderWithoutProposalUsesZeroSizeAndNaturalContent() {
+    let reader = GeometryReader { proxy in
+        Text("\(proxy.columns)x\(proxy.rows)")
+    }
+
+    let block = ViewResolver.block(from: reader)
+
+    #expect(block?.lines == ["0x0"])
+}
+
+@Test func geometryProxyColumnsRowsAndFrameMirrorSize() {
+    let proxy = GeometryProxy(columns: 7, rows: 1)
+
+    #expect(proxy.columns == 7)
+    #expect(proxy.rows == 1)
+    #expect(proxy.frame == GeometryFrame(size: GeometrySize(columns: 7, rows: 1)))
+}
+
+@Test func geometryReaderExposesLocalFrameFromProposal() {
+    let reader = GeometryReader { proxy in
+        Text(
+            "\(proxy.frame.origin.column),\(proxy.frame.origin.row),"
+                + "\(proxy.frame.size.columns),\(proxy.frame.size.rows)"
+        )
+    }
+
+    let block = ViewResolver.block(
+        from: reader,
+        in: RenderProposal(columns: 7, rows: 1)
+    )
+
+    #expect(block?.lines == ["0,0,7,1"])
+}
+
+@Test func geometryReaderUsesStackAxisProposals() {
+    let vertical = VStack {
+        GeometryReader { proxy in
+            Text("\(proxy.columns)x\(proxy.rows)")
+        }
+    }
+    let horizontal = HStack {
+        GeometryReader { proxy in
+            Text("\(proxy.columns)x\(proxy.rows)")
+        }
+    }
+
+    let verticalBlock = ViewResolver.block(
+        from: vertical,
+        in: RenderProposal(columns: 6, rows: 2)
+    )
+    let horizontalBlock = ViewResolver.block(
+        from: horizontal,
+        in: RenderProposal(columns: 6, rows: 2)
+    )
+
+    #expect(verticalBlock?.lines == ["6x0   "])
+    #expect(horizontalBlock?.lines == ["0x2", "   "])
+}
+
+@Test func geometryReaderClipsAndPadsKnownProposedAxes() {
+    let reader = GeometryReader { _ in
+        Text("ABCDE")
+    }
+
+    let block = ViewResolver.block(
+        from: reader,
+        in: RenderProposal(columns: 3, rows: 2)
+    )
+
+    #expect(block?.lines == ["ABC", "   "])
+}
+
 @Test func hStackSpacerWithoutProposalUsesZeroMinimumLength() {
     let stack = HStack {
         Text("A")
@@ -754,6 +850,8 @@ import Testing
     #expect(TerminalControl.hideCursorSequence == "\u{001B}[?25l")
     #expect(TerminalControl.showCursorSequence == "\u{001B}[?25h")
     #expect(TerminalControl.exitAlternateScreenSequence == "\u{001B}[?1049l")
+    #expect(TerminalControl.enableMouseTrackingSequence == "\u{001B}[?1000h\u{001B}[?1006h")
+    #expect(TerminalControl.disableMouseTrackingSequence == "\u{001B}[?1006l\u{001B}[?1000l")
 }
 
 @Test func controlCQuitsAndOtherInputProducesKeyPresses() {
@@ -766,6 +864,13 @@ import Testing
     let key: KeyEquivalent = "a"
     let modifiers: EventModifiers = [.shift, .control]
     let phases: KeyPress.Phases = [.down, .repeat]
+    let mouse = MouseEvent(
+        button: .left,
+        column: 2,
+        row: 3,
+        modifiers: .shift,
+        phase: .down
+    )
 
     #expect(key.character == "a")
     #expect(KeyEquivalent.upArrow.character == "\u{F700}")
@@ -777,6 +882,11 @@ import Testing
     #expect(phases.contains(.down))
     #expect(phases.contains(.repeat))
     #expect(KeyPress.Result.handled != .ignored)
+    #expect(mouse.button == .left)
+    #expect(mouse.column == 2)
+    #expect(mouse.row == 3)
+    #expect(mouse.modifiers == .shift)
+    #expect(mouse.phase == .down)
 }
 
 @Test func terminalParsesPrintableAndUTF8Input() {
@@ -818,6 +928,34 @@ import Testing
     #expect(TerminalControl.input(for: [27, 91, 54, 126]) == .keyPress(KeyPress(key: .pageDown, characters: "\u{F72D}")))
     #expect(TerminalControl.input(for: [27, 91, 51, 126]) == .keyPress(KeyPress(key: .deleteForward, characters: "\u{F728}")))
     #expect(TerminalControl.input(for: [27, 91, 90]) == .none)
+}
+
+@Test func terminalParsesSGRMouseInput() {
+    #expect(
+        TerminalControl.input(for: Array("\u{001B}[<0;12;3M".utf8))
+            == .mouse(MouseEvent(button: .left, column: 12, row: 3, phase: .down))
+    )
+    #expect(
+        TerminalControl.input(for: Array("\u{001B}[<0;12;3m".utf8))
+            == .mouse(MouseEvent(button: .left, column: 12, row: 3, phase: .up))
+    )
+    #expect(
+        TerminalControl.input(for: Array("\u{001B}[<20;1;2M".utf8))
+            == .mouse(
+                MouseEvent(
+                    button: .left,
+                    column: 1,
+                    row: 2,
+                    modifiers: [.shift, .control],
+                    phase: .down
+                )
+            )
+    )
+    #expect(
+        TerminalControl.input(for: Array("\u{001B}[<2;4;5M".utf8))
+            == .mouse(MouseEvent(button: .right, column: 4, row: 5, phase: .down))
+    )
+    #expect(TerminalControl.input(for: Array("\u{001B}[<0;12M".utf8)) == .none)
 }
 
 @Test func stateInitializersProvideWrappedValues() {
@@ -1245,6 +1383,143 @@ import Testing
     #expect(keyProbe.events == ["exact", "set", "characters", "phase"])
 }
 
+@Test func tapGestureModifierDoesNotChangeRenderedOutput() {
+    let runtime = StateRuntime()
+    let tapProbe = TapGestureProbe()
+
+    let block = runtime.block(
+        from: Text("A")
+            .onTapGesture {
+                tapProbe.record("tap")
+            }
+    )
+
+    #expect(block?.text == "A")
+    #expect(tapProbe.events.isEmpty)
+}
+
+@Test func tapGestureActionMutatesStateAndInvalidatesView() {
+    let runtime = StateRuntime()
+    let view = TapGestureStateMutationView()
+    let date = Date(timeIntervalSinceReferenceDate: 1_000)
+
+    #expect(runtime.block(from: view)?.text == "0")
+
+    dispatchClick(to: runtime, column: 1, row: 1, at: date)
+
+    #expect(runtime.consumeInvalidation())
+    #expect(runtime.block(from: view)?.text == "1")
+}
+
+@Test func tapGestureHitTestingUsesStackCoordinates() {
+    let runtime = StateRuntime()
+    let tapProbe = TapGestureProbe()
+    let view = StackTapGestureView(tapProbe: tapProbe)
+
+    _ = runtime.block(from: view)
+
+    dispatchClick(to: runtime, column: 1, row: 1)
+    dispatchClick(to: runtime, column: 3, row: 1)
+    dispatchClick(to: runtime, column: 1, row: 2)
+    dispatchClick(to: runtime, column: 2, row: 1, expecting: .ignored)
+
+    #expect(tapProbe.events == ["left", "right", "bottom"])
+}
+
+@Test func tapGestureHitTestingUsesMostSpecificRegion() {
+    let runtime = StateRuntime()
+    let tapProbe = TapGestureProbe()
+    let view = NestedTapGestureView(tapProbe: tapProbe)
+
+    _ = runtime.block(from: view)
+
+    dispatchClick(to: runtime, column: 1, row: 1)
+
+    #expect(tapProbe.events == ["child"])
+}
+
+@Test func tapGestureHitTestingRespectsFrameClipping() {
+    let runtime = StateRuntime()
+    let tapProbe = TapGestureProbe()
+    let view = Text("ABCD")
+        .onTapGesture {
+            tapProbe.record("tap")
+        }
+        .frame(width: 2)
+
+    _ = runtime.block(from: view)
+
+    dispatchClick(to: runtime, column: 2, row: 1)
+    dispatchClick(to: runtime, column: 3, row: 1, expecting: .ignored)
+
+    #expect(tapProbe.events == ["tap"])
+}
+
+@Test func tapGestureWaitsForLargerAvailableCounts() {
+    let runtime = StateRuntime()
+    let tapProbe = TapGestureProbe()
+    let view = CountedTapGestureView(tapProbe: tapProbe)
+    let date = Date(timeIntervalSinceReferenceDate: 1_000)
+
+    _ = runtime.block(from: view)
+
+    dispatchClick(to: runtime, column: 1, row: 1, at: date)
+    #expect(tapProbe.events.isEmpty)
+
+    dispatchClick(to: runtime, column: 1, row: 1, at: date.addingTimeInterval(0.1))
+    #expect(tapProbe.events.isEmpty)
+
+    dispatchClick(to: runtime, column: 1, row: 1, at: date.addingTimeInterval(0.2))
+    #expect(tapProbe.events == ["three"])
+}
+
+@Test func tapGestureTimeoutPerformsLargestReachedCount() {
+    let runtime = StateRuntime()
+    let tapProbe = TapGestureProbe()
+    let view = CountedTapGestureView(tapProbe: tapProbe)
+    let date = Date(timeIntervalSinceReferenceDate: 1_000)
+
+    _ = runtime.block(from: view)
+
+    dispatchClick(to: runtime, column: 1, row: 1, at: date)
+    dispatchClick(to: runtime, column: 1, row: 1, at: date.addingTimeInterval(0.1))
+
+    #expect(tapProbe.events.isEmpty)
+    #expect(
+        runtime.dispatchExpiredTapActions(at: date.addingTimeInterval(0.61)) == .handled
+    )
+    #expect(tapProbe.events == ["two"])
+}
+
+@Test func tapGestureIgnoresOtherButtonsAndMismatchedTargets() {
+    let runtime = StateRuntime()
+    let tapProbe = TapGestureProbe()
+    let view = Text("A")
+        .onTapGesture {
+            tapProbe.record("tap")
+        }
+
+    _ = runtime.block(from: view)
+
+    #expect(
+        runtime.dispatch(
+            MouseEvent(button: .right, column: 1, row: 1, phase: .down)
+        ) == .ignored
+    )
+    #expect(
+        runtime.dispatch(
+            MouseEvent(button: .left, column: 1, row: 1, phase: .down)
+        ) == .handled
+    )
+    #expect(
+        runtime.dispatch(
+            MouseEvent(button: .left, column: 2, row: 1, phase: .up)
+        ) == .ignored
+    )
+
+    #expect(tapProbe.events.isEmpty)
+}
+
 private final class BindingProbe<Value> {
 
     var binding: Binding<Value>?
@@ -1279,6 +1554,36 @@ private final class KeyPressProbe {
     func record(_ event: String) {
         events.append(event)
     }
+}
+
+private final class TapGestureProbe {
+
+    var events: [String] = []
+
+    func record(_ event: String) {
+        events.append(event)
+    }
+}
+
+private func dispatchClick(
+    to runtime: StateRuntime,
+    column: Int,
+    row: Int,
+    at date: Date = Date(timeIntervalSinceReferenceDate: 1_000),
+    expecting result: KeyPress.Result = .handled
+) {
+    #expect(
+        runtime.dispatch(
+            MouseEvent(button: .left, column: column, row: row, phase: .down),
+            at: date
+        ) == result
+    )
+    #expect(
+        runtime.dispatch(
+            MouseEvent(button: .left, column: column, row: row, phase: .up),
+            at: date
+        ) == result
+    )
 }
 
 private enum FocusField: Hashable {
@@ -1522,6 +1827,77 @@ private struct KeyPressStateMutationView: View {
             .onKeyPress("a") {
                 count += 1
                 return .handled
+            }
+    }
+}
+
+private struct TapGestureStateMutationView: View {
+
+    @State var count = 0
+
+    var body: some View {
+        Text(String(count))
+            .onTapGesture {
+                count += 1
+            }
+    }
+}
+
+private struct StackTapGestureView: View {
+
+    let tapProbe: TapGestureProbe
+
+    var body: some View {
+        VStack(alignment: .leading) {
+            HStack(spacing: 1) {
+                Text("A")
+                    .onTapGesture {
+                        tapProbe.record("left")
+                    }
+                Text("B")
+                    .onTapGesture {
+                        tapProbe.record("right")
+                    }
+            }
+            Text("C")
+                .onTapGesture {
+                    tapProbe.record("bottom")
+                }
+        }
+    }
+}
+
+private struct NestedTapGestureView: View {
+
+    let tapProbe: TapGestureProbe
+
+    var body: some View {
+        VStack {
+            Text("A")
+                .onTapGesture {
+                    tapProbe.record("child")
+                }
+        }
+        .onTapGesture {
+            tapProbe.record("parent")
+        }
+    }
+}
+
+private struct CountedTapGestureView: View {
+
+    let tapProbe: TapGestureProbe
+
+    var body: some View {
+        Text("A")
+            .onTapGesture(count: 1) {
+                tapProbe.record("one")
+            }
+            .onTapGesture(count: 2) {
+                tapProbe.record("two")
+            }
+            .onTapGesture(count: 3) {
+                tapProbe.record("three")
             }
     }
 }

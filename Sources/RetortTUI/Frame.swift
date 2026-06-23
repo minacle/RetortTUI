@@ -59,7 +59,12 @@ struct FrameView<Content: View>: View, FrameModifierRenderable {
 
         return RenderedBlock(
             lines: lines,
-            cursor: frameCursor(block.cursor, width: targetWidth, height: targetHeight)
+            cursor: frameCursor(block.cursor, width: targetWidth, height: targetHeight),
+            hitRegions: frameHitRegions(
+                block.hitRegions,
+                width: targetWidth,
+                height: targetHeight
+            )
         )
     }
 
@@ -80,6 +85,17 @@ struct FrameView<Content: View>: View, FrameModifierRenderable {
             row: cursor.row,
             column: min(cursor.column, width - 1)
         )
+    }
+
+    private func frameHitRegions(
+        _ hitRegions: [RenderedHitRegion],
+        width: Int,
+        height: Int
+    ) -> [RenderedHitRegion] {
+        let bounds = RenderedRect(width: width, height: height)
+        return hitRegions.compactMap {
+            $0.clipped(to: bounds)
+        }
     }
 }
 

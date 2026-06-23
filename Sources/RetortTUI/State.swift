@@ -202,7 +202,9 @@ final class StateRuntime {
             }
         }
 
-        return ViewResolver.block(from: view, in: proposal, path: [], runtime: self)
+        let block = ViewResolver.block(from: view, in: proposal, path: [], runtime: self)
+        input.updateHitRegions(block?.hitRegions ?? [])
+        return block
     }
 
     func element<Content: View>(
@@ -287,6 +289,10 @@ final class StateRuntime {
         input.register(handler, at: path)
     }
 
+    func registerTapGestureHandler(_ handler: TapGestureHandler, at path: [Int]) {
+        input.register(handler, at: path)
+    }
+
     func isFocused(at path: [Int]) -> Bool {
         focus.activePath == path
     }
@@ -313,6 +319,26 @@ final class StateRuntime {
         return input.dispatch(keyPress, from: activePath) { path, operation in
             withView(at: path, perform: operation)
         }
+    }
+
+    func dispatch(_ mouseEvent: MouseEvent, at date: Date = Date()) -> KeyPress.Result {
+        input.dispatch(mouseEvent, at: date) { path, operation in
+            withView(at: path, perform: operation)
+        }
+    }
+
+    var nextTapDeadline: Date? {
+        input.nextTapDeadline
+    }
+
+    func dispatchExpiredTapActions(at date: Date = Date()) -> KeyPress.Result {
+        input.dispatchExpiredTapActions(at: date) { path, operation in
+            withView(at: path, perform: operation)
+        }
+    }
+
+    func updateRenderedFrame(_ frame: TextFrame) {
+        input.updateRootFrame(frame)
     }
 
     func withView<Value>(

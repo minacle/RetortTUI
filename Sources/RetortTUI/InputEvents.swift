@@ -143,6 +143,51 @@ public struct KeyPress: Equatable, Sendable {
     }
 }
 
+enum MouseButton: Equatable, Hashable, Sendable {
+
+    case left
+
+    case middle
+
+    case right
+
+    case other(Int)
+}
+
+struct MouseEvent: Equatable, Sendable {
+
+    enum Phase: Equatable, Sendable {
+
+        case down
+
+        case up
+    }
+
+    let button: MouseButton
+
+    let column: Int
+
+    let row: Int
+
+    let modifiers: EventModifiers
+
+    let phase: Phase
+
+    init(
+        button: MouseButton,
+        column: Int,
+        row: Int,
+        modifiers: EventModifiers = [],
+        phase: Phase
+    ) {
+        self.button = button
+        self.column = max(column, 1)
+        self.row = max(row, 1)
+        self.modifiers = modifiers
+        self.phase = phase
+    }
+}
+
 struct KeyPressView<Content: View>: View, InputModifierRenderable {
 
     typealias Body = Never
@@ -180,6 +225,42 @@ struct KeyPressView<Content: View>: View, InputModifierRenderable {
     }
 }
 
+struct TapGestureView<Content: View>: View, InputModifierRenderable {
+
+    typealias Body = Never
+
+    let content: Content
+
+    let handler: TapGestureHandler
+
+    func renderedBlock(
+        in proposal: RenderProposal?,
+        path: [Int],
+        runtime: StateRuntime?
+    ) -> RenderedBlock? {
+        runtime?.registerTapGestureHandler(handler, at: path)
+        guard var block = ViewResolver.block(
+            from: content,
+            in: proposal,
+            path: path,
+            runtime: runtime
+        ) else {
+            return nil
+        }
+
+        block.hitRegions.append(RenderedHitRegion(path: path, frame: block.bounds))
+        return block
+    }
+
+    func renderedElement(
+        in proposal: RenderProposal?,
+        path: [Int],
+        runtime: StateRuntime?
+    ) -> RenderedElement? {
+        renderedBlock(in: proposal, path: path, runtime: runtime).map { .block($0) }
+    }
+}
+
 struct KeyPressHandler {
 
     let actionPath: [Int]?
@@ -187,6 +268,15 @@ struct KeyPressHandler {
     let matches: (KeyPress) -> Bool
 
     let action: (KeyPress) -> KeyPress.Result
+}
+
+struct TapGestureHandler {
+
+    let actionPath: [Int]?
+
+    let count: Int
+
+    let action: () -> Void
 }
 
 protocol InputModifierRenderable {
@@ -205,6 +295,23 @@ protocol InputModifierRenderable {
 }
 
 public extension View {
+
+    /// Performs an action when this view recognizes a tap gesture.
+    func onTapGesture(
+        count: Int = 1,
+        perform action: @escaping () -> Void
+    ) -> some View {
+        precondition(count >= 1, "onTapGesture count must be greater than zero.")
+
+        return TapGestureView(
+            content: self,
+            handler: TapGestureHandler(
+                actionPath: StateContext.currentPath,
+                count: count,
+                action: action
+            )
+        )
+    }
 
     /// Performs an action if the user presses a key while this view has focus.
     func onKeyPress(
@@ -289,12 +396,41 @@ final class InputRuntime {
 
     private var handlersByPath: [[Int]: [KeyPressHandler]] = [:]
 
+    private var tapHandlersByPath: [[Int]: [TapGestureHandler]] = [:]
+
+    private var hitRegions: [RenderedHitRegion] = []
+
+    private var rootFrame = TextFrame(text: "", row: 1, column: 1)
+
+    private var pressedTapTarget: [Int]?
+
+    private var tapSequence: TapSequence?
+
+    private let tapTimeout: TimeInterval = 0.5
+
+    var nextTapDeadline: Date? {
+        tapSequence?.deadline
+    }
+
     func beginRender() {
         handlersByPath = [:]
+        tapHandlersByPath = [:]
     }
 
     func register(_ handler: KeyPressHandler, at path: [Int]) {
         handlersByPath[path, default: []].append(handler)
+    }
+
+    func register(_ handler: TapGestureHandler, at path: [Int]) {
+        tapHandlersByPath[path, default: []].append(handler)
+    }
+
+    func updateHitRegions(_ hitRegions: [RenderedHitRegion]) {
+        self.hitRegions = hitRegions
+    }
+
+    func updateRootFrame(_ frame: TextFrame) {
+        self.rootFrame = frame
     }
 
     func dispatch(
@@ -330,5 +466,153 @@ final class InputRuntime {
         }
 
         return .ignored
+    }
+
+    func dispatch(
+        _ mouseEvent: MouseEvent,
+        at date: Date,
+        perform: ([Int], () -> Void) -> Void
+    ) -> KeyPress.Result {
+        _ = dispatchExpiredTapActions(at: date, perform: perform)
+
+        guard mouseEvent.button == .left else {
+            pressedTapTarget = nil
+            return .ignored
+        }
+
+        switch mouseEvent.phase {
+        case .down:
+            pressedTapTarget = tapTarget(at: mouseEvent)
+            return pressedTapTarget == nil ? .ignored : .handled
+        case .up:
+            guard let pressedTapTarget else {
+                return .ignored
+            }
+
+            defer {
+                self.pressedTapTarget = nil
+            }
+
+            guard tapTarget(at: mouseEvent) == pressedTapTarget else {
+                resetTapSequence()
+                return .ignored
+            }
+
+            return dispatchTap(at: pressedTapTarget, date: date, perform: perform)
+        }
+    }
+
+    func dispatchExpiredTapActions(
+        at date: Date,
+        perform: ([Int], () -> Void) -> Void
+    ) -> KeyPress.Result {
+        guard let sequence = tapSequence,
+              date >= sequence.deadline else {
+            return .ignored
+        }
+
+        defer {
+            resetTapSequence()
+        }
+
+        guard let count = sequence.pendingCount else {
+            return .ignored
+        }
+
+        performTapActions(at: sequence.path, count: count, perform: perform)
+        return .handled
+    }
+
+    private func tapTarget(at mouseEvent: MouseEvent) -> [Int]? {
+        let column = mouseEvent.column - rootFrame.column
+        let row = mouseEvent.row - rootFrame.row
+        return hitRegions
+            .filter {
+                tapHandlersByPath[$0.path] != nil
+                    && $0.frame.contains(column: column, row: row)
+            }
+            .max {
+                if $0.path.count != $1.path.count {
+                    return $0.path.count < $1.path.count
+                }
+
+                return $0.frame.area > $1.frame.area
+            }?
+            .path
+    }
+
+    private func dispatchTap(
+        at path: [Int],
+        date: Date,
+        perform: ([Int], () -> Void) -> Void
+    ) -> KeyPress.Result {
+        let handlers = tapHandlersByPath[path] ?? []
+        guard let maximumCount = handlers.map(\.count).max() else {
+            resetTapSequence()
+            return .ignored
+        }
+
+        if tapSequence?.path != path || tapSequence?.isExpired(at: date) == true {
+            tapSequence = TapSequence(path: path)
+        }
+
+        tapSequence?.count += 1
+        tapSequence?.deadline = date.addingTimeInterval(tapTimeout)
+
+        guard let sequence = tapSequence else {
+            return .ignored
+        }
+
+        if handlers.contains(where: { $0.count == sequence.count }) {
+            if sequence.count >= maximumCount {
+                performTapActions(at: path, count: sequence.count, perform: perform)
+                resetTapSequence()
+            }
+            else {
+                tapSequence?.pendingCount = sequence.count
+            }
+            return .handled
+        }
+
+        if let pendingCount = handlers.map(\.count)
+            .filter({ $0 <= sequence.count })
+            .max() {
+            tapSequence?.pendingCount = pendingCount
+        }
+
+        if sequence.count >= maximumCount {
+            resetTapSequence()
+        }
+
+        return .handled
+    }
+
+    private func performTapActions(
+        at path: [Int],
+        count: Int,
+        perform: ([Int], () -> Void) -> Void
+    ) {
+        for handler in tapHandlersByPath[path] ?? [] where handler.count == count {
+            perform(handler.actionPath ?? path, handler.action)
+        }
+    }
+
+    private func resetTapSequence() {
+        tapSequence = nil
+    }
+}
+
+private struct TapSequence {
+
+    let path: [Int]
+
+    var count = 0
+
+    var deadline = Date.distantPast
+
+    var pendingCount: Int?
+
+    func isExpired(at date: Date) -> Bool {
+        date >= deadline
     }
 }

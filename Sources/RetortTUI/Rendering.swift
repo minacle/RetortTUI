@@ -33,15 +33,97 @@ struct RenderedCursor: Equatable, Sendable {
     }
 }
 
+struct RenderedRect: Equatable, Sendable {
+
+    var x: Int
+
+    var y: Int
+
+    var width: Int
+
+    var height: Int
+
+    init(x: Int = 0, y: Int = 0, width: Int = 0, height: Int = 0) {
+        self.x = x
+        self.y = y
+        self.width = max(width, 0)
+        self.height = max(height, 0)
+    }
+
+    var area: Int {
+        width * height
+    }
+
+    var isEmpty: Bool {
+        width == 0 || height == 0
+    }
+
+    func contains(column: Int, row: Int) -> Bool {
+        !isEmpty
+            && column >= x
+            && column < x + width
+            && row >= y
+            && row < y + height
+    }
+
+    func offsetBy(x deltaX: Int, y deltaY: Int) -> RenderedRect {
+        RenderedRect(
+            x: x + deltaX,
+            y: y + deltaY,
+            width: width,
+            height: height
+        )
+    }
+
+    func clipped(to bounds: RenderedRect) -> RenderedRect? {
+        let minX = max(x, bounds.x)
+        let minY = max(y, bounds.y)
+        let maxX = min(x + width, bounds.x + bounds.width)
+        let maxY = min(y + height, bounds.y + bounds.height)
+        let rect = RenderedRect(
+            x: minX,
+            y: minY,
+            width: maxX - minX,
+            height: maxY - minY
+        )
+
+        return rect.isEmpty ? nil : rect
+    }
+}
+
+struct RenderedHitRegion: Equatable, Sendable {
+
+    var path: [Int]
+
+    var frame: RenderedRect
+
+    func offsetBy(x: Int, y: Int) -> RenderedHitRegion {
+        RenderedHitRegion(path: path, frame: frame.offsetBy(x: x, y: y))
+    }
+
+    func clipped(to bounds: RenderedRect) -> RenderedHitRegion? {
+        frame.clipped(to: bounds).map {
+            RenderedHitRegion(path: path, frame: $0)
+        }
+    }
+}
+
 struct RenderedBlock: Equatable, Sendable {
 
     var lines: [String]
 
     var cursor: RenderedCursor?
 
-    init(lines: [String], cursor: RenderedCursor? = nil) {
+    var hitRegions: [RenderedHitRegion]
+
+    init(
+        lines: [String],
+        cursor: RenderedCursor? = nil,
+        hitRegions: [RenderedHitRegion] = []
+    ) {
         self.lines = lines
         self.cursor = cursor
+        self.hitRegions = hitRegions
     }
 
     var text: String {
@@ -54,6 +136,10 @@ struct RenderedBlock: Equatable, Sendable {
 
     var height: Int {
         lines.count
+    }
+
+    var bounds: RenderedRect {
+        RenderedRect(width: width, height: height)
     }
 }
 
@@ -121,6 +207,10 @@ enum ViewResolver {
 
         if let textField = view as? any TextFieldRenderable {
             return textField.renderedBlock(in: proposal, path: path, runtime: runtime)
+        }
+
+        if let geometryReader = view as? any GeometryReaderRenderable {
+            return geometryReader.renderedBlock(in: proposal, path: path, runtime: runtime)
         }
 
         if let group = view as? ViewGroup {
@@ -207,6 +297,14 @@ enum ViewResolver {
                 path: path,
                 runtime: runtime
             ).map { .block($0) }
+        }
+
+        if let geometryReader = view as? any GeometryReaderRenderable {
+            return geometryReader.renderedElement(
+                in: proposal,
+                path: path,
+                runtime: runtime
+            )
         }
 
         if let group = view as? ViewGroup {
@@ -476,7 +574,8 @@ enum StackRenderer {
 
         return RenderedBlock(
             lines: lines,
-            cursor: horizontalCursor(from: items, height: height, alignment: alignment)
+            cursor: horizontalCursor(from: items, height: height, alignment: alignment),
+            hitRegions: horizontalHitRegions(from: items, height: height, alignment: alignment)
         )
     }
 
@@ -516,7 +615,8 @@ enum StackRenderer {
 
         return RenderedBlock(
             lines: lines,
-            cursor: verticalCursor(from: items, width: width, alignment: alignment)
+            cursor: verticalCursor(from: items, width: width, alignment: alignment),
+            hitRegions: verticalHitRegions(from: items, width: width, alignment: alignment)
         )
     }
 
@@ -659,6 +759,27 @@ enum StackRenderer {
         return nil
     }
 
+    private static func horizontalHitRegions(
+        from items: [HorizontalItem],
+        height: Int,
+        alignment: VerticalAlignment
+    ) -> [RenderedHitRegion] {
+        items.flatMap { item -> [RenderedHitRegion] in
+            guard let block = item.block else {
+                return []
+            }
+
+            let y = verticalOffset(
+                contentHeight: block.height,
+                containerHeight: height,
+                alignment: alignment
+            )
+            return block.hitRegions.map {
+                $0.offsetBy(x: item.x, y: y)
+            }
+        }
+    }
+
     private static func verticalCursor(
         from items: [VerticalItem],
         width: Int,
@@ -680,6 +801,27 @@ enum StackRenderer {
         }
 
         return nil
+    }
+
+    private static func verticalHitRegions(
+        from items: [VerticalItem],
+        width: Int,
+        alignment: HorizontalAlignment
+    ) -> [RenderedHitRegion] {
+        items.flatMap { item -> [RenderedHitRegion] in
+            guard let block = item.block else {
+                return []
+            }
+
+            let x = horizontalOffset(
+                contentWidth: block.width,
+                containerWidth: width,
+                alignment: alignment
+            )
+            return block.hitRegions.map {
+                $0.offsetBy(x: x, y: item.y)
+            }
+        }
     }
 
     private static func flexibleLengths(

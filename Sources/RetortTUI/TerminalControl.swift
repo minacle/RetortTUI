@@ -16,6 +16,8 @@ enum TerminalInput: Equatable, Sendable {
 
     case keyPress(KeyPress)
 
+    case mouse(MouseEvent)
+
     case none
 }
 
@@ -33,6 +35,10 @@ enum TerminalControl {
 
     static let exitAlternateScreenSequence = "\u{001B}[?1049l"
 
+    static let enableMouseTrackingSequence = "\u{001B}[?1000h\u{001B}[?1006h"
+
+    static let disableMouseTrackingSequence = "\u{001B}[?1006l\u{001B}[?1000l"
+
     static func cursorPositionSequence(row: Int, column: Int) -> String {
         "\u{001B}[\(max(row, 1));\(max(column, 1))H"
     }
@@ -47,8 +53,11 @@ enum TerminalControl {
         return TerminalViewportSize(columns: size.columns, rows: size.rows)
     }
 
-    static func readInput() -> TerminalInput {
-        let firstByte = readByte()
+    static func readInput(timeout: TimeInterval? = nil) -> TerminalInput {
+        guard let firstByte = readByte(timeout: timeout) else {
+            return .none
+        }
+
         var bytes = [firstByte]
 
         if firstByte == 27 {
@@ -72,6 +81,10 @@ enum TerminalControl {
 
         if bytes == [quitByte] {
             return .quit
+        }
+
+        if let mouseEvent = mouseEventInput(for: bytes) {
+            return .mouse(mouseEvent)
         }
 
         if let keyPress = escapeSequenceInput(for: bytes) {
@@ -101,8 +114,22 @@ enum TerminalControl {
         FileHandle.standardOutput.write(Data(output.utf8))
     }
 
-    private static func readByte() -> UInt8 {
-        FileHandle.standardInput.readData(ofLength: 1).first ?? 0
+    private static func readByte(timeout: TimeInterval?) -> UInt8? {
+        guard waitForInput(timeout: timeout) else {
+            return nil
+        }
+
+        return FileHandle.standardInput.readData(ofLength: 1).first
+    }
+
+    private static func waitForInput(timeout: TimeInterval?) -> Bool {
+        guard let timeout else {
+            return true
+        }
+
+        var descriptor = pollfd(fd: STDIN_FILENO, events: Int16(POLLIN), revents: 0)
+        let milliseconds = max(Int32((timeout * 1_000).rounded(.up)), 0)
+        return poll(&descriptor, 1, milliseconds) > 0
     }
 
     private static func readUTF8ContinuationBytes(after firstByte: UInt8) -> [UInt8] {
@@ -141,7 +168,7 @@ enum TerminalControl {
         var bytes: [UInt8] = []
         var byte: UInt8 = 0
 
-        while bytes.count < 16, readNonblockingByte(into: &byte) == 1 {
+        while bytes.count < 64, readNonblockingByte(into: &byte) == 1 {
             bytes.append(byte)
         }
 
@@ -181,6 +208,64 @@ enum TerminalControl {
         default:
             return nil
         }
+    }
+
+    private static func mouseEventInput(for bytes: [UInt8]) -> MouseEvent? {
+        guard let string = String(bytes: bytes, encoding: .ascii),
+              string.hasPrefix("\u{001B}[<"),
+              let final = string.last,
+              final == "M" || final == "m" else {
+            return nil
+        }
+
+        let start = string.index(string.startIndex, offsetBy: 3)
+        let body = string[start..<string.index(before: string.endIndex)]
+        let parts = body.split(separator: ";")
+        guard parts.count == 3,
+              let encodedButton = Int(parts[0]),
+              let column = Int(parts[1]),
+              let row = Int(parts[2]) else {
+            return nil
+        }
+
+        return MouseEvent(
+            button: mouseButton(for: encodedButton),
+            column: column,
+            row: row,
+            modifiers: mouseModifiers(for: encodedButton),
+            phase: final == "M" ? .down : .up
+        )
+    }
+
+    private static func mouseButton(for encodedButton: Int) -> MouseButton {
+        if encodedButton & 64 != 0 || encodedButton & 128 != 0 {
+            return .other(encodedButton)
+        }
+
+        switch encodedButton & 0b11 {
+        case 0:
+            return .left
+        case 1:
+            return .middle
+        case 2:
+            return .right
+        default:
+            return .other(encodedButton)
+        }
+    }
+
+    private static func mouseModifiers(for encodedButton: Int) -> EventModifiers {
+        var modifiers: EventModifiers = []
+        if encodedButton & 4 != 0 {
+            modifiers.insert(.shift)
+        }
+        if encodedButton & 8 != 0 {
+            modifiers.insert(.option)
+        }
+        if encodedButton & 16 != 0 {
+            modifiers.insert(.control)
+        }
+        return modifiers
     }
 
     private static func asciiInput(for byte: UInt8) -> KeyPress? {
@@ -246,6 +331,7 @@ final class TerminalSession {
 
         try raw.apply(to: .standardInput, when: .now)
         TerminalControl.write(TerminalControl.enterAlternateScreenSequence)
+        TerminalControl.write(TerminalControl.enableMouseTrackingSequence)
         TerminalControl.write(TerminalControl.hideCursorSequence)
         isActive = true
     }
@@ -257,6 +343,7 @@ final class TerminalSession {
 
         try? original.apply(to: .standardInput, when: .now)
         TerminalControl.write(TerminalControl.showCursorSequence)
+        TerminalControl.write(TerminalControl.disableMouseTrackingSequence)
         TerminalControl.write(TerminalControl.exitAlternateScreenSequence)
         isActive = false
     }

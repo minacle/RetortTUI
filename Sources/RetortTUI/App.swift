@@ -1,3 +1,5 @@
+import Foundation
+
 /// The entry point for a RetortTUI application.
 public protocol App {
 
@@ -40,14 +42,18 @@ struct AppRunner<Application: App> {
         render(root, using: runtime)
 
         while true {
-            switch TerminalControl.readInput() {
+            switch TerminalControl.readInput(timeout: inputTimeout(using: runtime)) {
             case .quit:
                 return
             case .keyPress(let keyPress):
                 _ = runtime.dispatch(keyPress)
+            case .mouse(let mouseEvent):
+                _ = runtime.dispatch(mouseEvent)
             case .none:
                 break
             }
+
+            _ = runtime.dispatchExpiredTapActions()
 
             if runtime.consumeInvalidation() {
                 render(root, using: runtime)
@@ -65,11 +71,18 @@ struct AppRunner<Application: App> {
                 return
             }
 
+            runtime.updateRenderedFrame(TextRenderer.frame(for: block, in: viewport))
             render(block, in: viewport)
         } while runtime.consumeInvalidation()
     }
 
     private func render(_ block: RenderedBlock, in viewport: TerminalViewportSize) {
         TerminalControl.write(TextRenderer.screen(for: block, in: viewport))
+    }
+
+    private func inputTimeout(using runtime: StateRuntime) -> TimeInterval? {
+        runtime.nextTapDeadline.map {
+            max($0.timeIntervalSinceNow, 0)
+        }
     }
 }
