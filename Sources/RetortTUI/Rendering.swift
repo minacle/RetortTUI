@@ -96,6 +96,10 @@ enum ViewResolver {
             return block(for: spacer, in: proposal)
         }
 
+        if let scroll = view as? any ScrollRenderable {
+            return scroll.renderedBlock(in: proposal, path: path, runtime: runtime)
+        }
+
         if let group = view as? ViewGroup {
             return StackRenderer.vertical(
                 group.elements.enumerated().compactMap { index, element in
@@ -113,6 +117,14 @@ enum ViewResolver {
 
         if let stack = view as? any StackRenderable {
             return stack.renderedBlock(in: proposal, path: path, runtime: runtime)
+        }
+
+        if let modifier = view as? any FrameModifierRenderable {
+            return modifier.renderedBlock(in: proposal, path: path, runtime: runtime)
+        }
+
+        if let modifier = view as? any ScrollPositionModifierRenderable {
+            return modifier.renderedBlock(in: proposal, path: path, runtime: runtime)
         }
 
         if let modifier = view as? any FocusModifierRenderable {
@@ -154,6 +166,14 @@ enum ViewResolver {
             return .spacer(minLength: spacer.minLength ?? 0)
         }
 
+        if let scroll = view as? any ScrollRenderable {
+            return scroll.renderedBlock(
+                in: proposal,
+                path: path,
+                runtime: runtime
+            ).map { .block($0) }
+        }
+
         if let group = view as? ViewGroup {
             return block(
                 from: group,
@@ -169,6 +189,22 @@ enum ViewResolver {
                 path: path,
                 runtime: runtime
             ).map { .block($0) }
+        }
+
+        if let modifier = view as? any FrameModifierRenderable {
+            return modifier.renderedElement(
+                in: proposal,
+                path: path,
+                runtime: runtime
+            )
+        }
+
+        if let modifier = view as? any ScrollPositionModifierRenderable {
+            return modifier.renderedElement(
+                in: proposal,
+                path: path,
+                runtime: runtime
+            )
         }
 
         if let modifier = view as? any FocusModifierRenderable {

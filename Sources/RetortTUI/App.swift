@@ -56,15 +56,17 @@ struct AppRunner<Application: App> {
     }
 
     private func render(_ root: any RootScene, using runtime: StateRuntime) {
-        let viewport = TerminalControl.currentTerminalSize()
-        guard let block = runtime.block(
-            from: root.root,
-            in: RenderProposal(viewport)
-        ) else {
-            return
-        }
+        repeat {
+            let viewport = TerminalControl.currentTerminalSize()
+            guard let block = runtime.block(
+                from: root.root,
+                in: RenderProposal(viewport)
+            ) else {
+                return
+            }
 
-        render(block, in: viewport)
+            render(block, in: viewport)
+        } while runtime.consumeInvalidation()
     }
 
     private func render(_ block: RenderedBlock, in viewport: TerminalViewportSize) {

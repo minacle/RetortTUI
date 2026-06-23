@@ -184,6 +184,235 @@ import Testing
     #expect(block?.lines == ["A", " ", " ", " ", "B"])
 }
 
+@Test func scrollViewClipsVerticallyByDefault() {
+    let scrollView = ScrollView {
+        VStack {
+            Text("A")
+            Text("B")
+            Text("C")
+        }
+    }
+
+    let block = ViewResolver.block(from: scrollView, in: RenderProposal(rows: 2))
+
+    #expect(block?.lines == ["A", "B"])
+}
+
+@Test func scrollViewClipsHorizontally() {
+    let scrollView = ScrollView(.horizontal) {
+        Text("ABCDE")
+    }
+
+    let block = ViewResolver.block(from: scrollView, in: RenderProposal(columns: 3))
+
+    #expect(block?.lines == ["ABC"])
+}
+
+@Test func scrollViewAppliesPointPositionOnBothAxes() {
+    let scrollView = ScrollView([.horizontal, .vertical]) {
+        VStack {
+            Text("ABCDE")
+            Text("FGHIJ")
+            Text("KLMNO")
+        }
+    }
+    .scrollPosition(.constant(ScrollPosition(point: ScrollPoint(x: 1, y: 1))))
+
+    let block = ViewResolver.block(
+        from: scrollView,
+        in: RenderProposal(columns: 3, rows: 2)
+    )
+
+    #expect(block?.lines == ["GHI", "LMN"])
+}
+
+@Test func scrollPositionMutatingMethodsReplacePosition() {
+    var position = ScrollPosition()
+    #expect(position.point == nil)
+    #expect(position.edge == nil)
+
+    position.scrollTo(point: ScrollPoint(x: 1, y: 2))
+    #expect(position.point == ScrollPoint(x: 1, y: 2))
+    #expect(position.x == 1)
+    #expect(position.y == 2)
+
+    position.scrollTo(x: 4)
+    #expect(position.point == ScrollPoint(x: 4, y: 0))
+
+    position.scrollTo(y: 5)
+    #expect(position.point == ScrollPoint(x: 0, y: 5))
+
+    position.scrollTo(x: 6, y: 7)
+    #expect(position.point == ScrollPoint(x: 6, y: 7))
+
+    position.scrollTo(edge: .bottom)
+    #expect(position.point == nil)
+    #expect(position.edge == .bottom)
+}
+
+@Test func scrollPositionNormalizesNegativeCoordinates() {
+    #expect(ScrollPoint(x: -1, y: -2) == ScrollPoint())
+    #expect(ScrollPosition(x: -3).point == ScrollPoint())
+    #expect(ScrollPosition(y: -4).point == ScrollPoint())
+    #expect(ScrollPosition(x: -5, y: -6).point == ScrollPoint())
+}
+
+@Test func scrollViewResolvesEdgePositions() {
+    let vertical = ScrollView {
+        VStack {
+            Text("A")
+            Text("B")
+            Text("C")
+        }
+    }
+    .scrollPosition(.constant(ScrollPosition(edge: .bottom)))
+    let horizontal = ScrollView(.horizontal) {
+        Text("ABCDE")
+    }
+    .scrollPosition(.constant(ScrollPosition(edge: .trailing)))
+
+    let verticalBlock = ViewResolver.block(from: vertical, in: RenderProposal(rows: 2))
+    let horizontalBlock = ViewResolver.block(from: horizontal, in: RenderProposal(columns: 3))
+
+    #expect(verticalBlock?.lines == ["B", "C"])
+    #expect(horizontalBlock?.lines == ["CDE"])
+}
+
+@Test func scrollViewIgnoresPositionOnDisabledAxes() {
+    let vertical = ScrollView {
+        Text("ABCDE")
+    }
+    .scrollPosition(.constant(ScrollPosition(x: 2, y: 0)))
+    let horizontal = ScrollView(.horizontal) {
+        VStack {
+            Text("ABC")
+            Text("DEF")
+        }
+    }
+    .scrollPosition(.constant(ScrollPosition(x: 0, y: 1)))
+
+    let verticalBlock = ViewResolver.block(
+        from: vertical,
+        in: RenderProposal(columns: 3, rows: 1)
+    )
+    let horizontalBlock = ViewResolver.block(
+        from: horizontal,
+        in: RenderProposal(columns: 3, rows: 1)
+    )
+
+    #expect(verticalBlock?.lines == ["ABC"])
+    #expect(horizontalBlock?.lines == ["ABC"])
+}
+
+@Test func scrollViewClampsOversizedPositions() {
+    let scrollView = ScrollView([.horizontal, .vertical]) {
+        VStack {
+            Text("ABCDE")
+            Text("FGHIJ")
+            Text("KLMNO")
+        }
+    }
+    .scrollPosition(.constant(ScrollPosition(x: 99, y: 99)))
+
+    let block = ViewResolver.block(
+        from: scrollView,
+        in: RenderProposal(columns: 3, rows: 2)
+    )
+
+    #expect(block?.lines == ["HIJ", "MNO"])
+}
+
+@Test func frameClipsAndPadsToFixedSize() {
+    let view = Text("AB").frame(width: 4, height: 2)
+
+    let block = ViewResolver.block(from: view)
+
+    #expect(block?.lines == ["AB  ", "    "])
+}
+
+@Test func frameProvidesViewportToNestedScrollView() {
+    let view = ScrollView([.horizontal, .vertical]) {
+        VStack {
+            Text("ABCDE")
+            Text("FGHIJ")
+            Text("KLMNO")
+        }
+    }
+    .scrollPosition(.constant(ScrollPosition(x: 1, y: 1)))
+    .frame(width: 3, height: 2)
+
+    let block = ViewResolver.block(from: view)
+
+    #expect(block?.lines == ["GHI", "LMN"])
+}
+
+@Test func scrollPositionBindingClampsOversizedPoint() {
+    var position = ScrollPosition(x: 99, y: 99)
+    let scrollView = ScrollView([.horizontal, .vertical]) {
+        VStack {
+            Text("ABCDE")
+            Text("FGHIJ")
+            Text("KLMNO")
+        }
+    }
+    .scrollPosition(
+        Binding(
+            get: { position },
+            set: { position = $0 }
+        )
+    )
+
+    let block = ViewResolver.block(
+        from: scrollView,
+        in: RenderProposal(columns: 3, rows: 2)
+    )
+
+    #expect(block?.lines == ["HIJ", "MNO"])
+    #expect(position.point == ScrollPoint(x: 2, y: 1))
+}
+
+@Test func scrollPositionBindingResolvesEdgeToClampedPoint() {
+    var position = ScrollPosition(edge: .bottom)
+    let scrollView = ScrollView {
+        VStack {
+            Text("A")
+            Text("B")
+            Text("C")
+        }
+    }
+    .scrollPosition(
+        Binding(
+            get: { position },
+            set: { position = $0 }
+        )
+    )
+
+    let block = ViewResolver.block(from: scrollView, in: RenderProposal(rows: 2))
+
+    #expect(block?.lines == ["B", "C"])
+    #expect(position.point == ScrollPoint(y: 1))
+}
+
+@Test func scrollPositionModifierAffectsScrollableDescendantOnly() {
+    let scrolled = HStack {
+        ScrollView {
+            VStack {
+                Text("A")
+                Text("B")
+                Text("C")
+            }
+        }
+    }
+    .scrollPosition(.constant(ScrollPosition(y: 1)))
+    let unchanged = Text("Hello").scrollPosition(.constant(ScrollPosition(y: 9)))
+
+    let scrolledBlock = ViewResolver.block(from: scrolled, in: RenderProposal(rows: 2))
+    let unchangedBlock = ViewResolver.block(from: unchanged, in: RenderProposal(rows: 1))
+
+    #expect(scrolledBlock?.lines == ["B", "C"])
+    #expect(unchangedBlock?.lines == ["Hello"])
+}
+
 @Test func textFrameCentersInViewport() {
     let frame = TextRenderer.frame(
         for: "Hello",
