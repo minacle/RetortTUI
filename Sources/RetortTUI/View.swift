@@ -29,12 +29,27 @@ public enum ViewBuilder {
         EmptyView()
     }
 
-    public static func buildBlock<Content: View>(_ content: Content) -> Content {
+    public static func buildPartialBlock<Content: View>(first content: Content) -> Content {
         content
+    }
+
+    public static func buildPartialBlock<Accumulated: View, Content: View>(
+        accumulated: Accumulated,
+        next content: Content
+    ) -> some View {
+        ViewGroup(elements(from: accumulated) + [AnyViewStorage(content)])
     }
 
     public static func buildExpression<Content: View>(_ expression: Content) -> Content {
         expression
+    }
+
+    private static func elements<Content: View>(from content: Content) -> [AnyViewStorage] {
+        if let group = content as? ViewGroup {
+            return group.elements
+        }
+
+        return [AnyViewStorage(content)]
     }
 }
 
@@ -44,4 +59,30 @@ public struct EmptyView: View {
     public typealias Body = Never
 
     public init() {}
+}
+
+struct ViewGroup: View {
+
+    typealias Body = Never
+
+    let elements: [AnyViewStorage]
+
+    init(_ elements: [AnyViewStorage]) {
+        self.elements = elements
+    }
+}
+
+struct AnyViewStorage {
+
+    private let block: () -> RenderedBlock?
+
+    init<Content: View>(_ content: Content) {
+        self.block = {
+            ViewResolver.block(from: content)
+        }
+    }
+
+    func renderedBlock() -> RenderedBlock? {
+        block()
+    }
 }
