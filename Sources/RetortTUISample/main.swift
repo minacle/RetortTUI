@@ -469,6 +469,19 @@ private struct LayoutAndBindingDemo: View {
             }
 
             HStack(spacing: 2) {
+                RowLabel("conditionals")
+                if profile.username.isEmpty {
+                    Text("username missing")
+                }
+                else {
+                    Text("hello \(profile.username)")
+                }
+                if !profile.email.isEmpty {
+                    Text("email set")
+                }
+            }
+
+            HStack(spacing: 2) {
                 RowLabel("geometry")
                 GeometryReader { proxy in
                     Text("\(proxy.columns)x\(proxy.rows) @ \(proxy.frame.origin.column),\(proxy.frame.origin.row)")

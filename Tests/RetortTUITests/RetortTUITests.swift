@@ -336,6 +336,88 @@ import Testing
     #expect(ViewResolver.text(from: ContentView()) == nil)
 }
 
+@Test func viewBuilderIfIncludesContentWhenTrueAndSkipsWhenFalse() {
+    struct ContentView: View {
+
+        let isVisible: Bool
+
+        var body: some View {
+            VStack(alignment: .leading) {
+                Text("A")
+                if isVisible {
+                    Text("B")
+                }
+                Text("C")
+            }
+        }
+    }
+
+    #expect(ViewResolver.block(from: ContentView(isVisible: true))?.lines == ["A", "B", "C"])
+    #expect(ViewResolver.block(from: ContentView(isVisible: false))?.lines == ["A", "C"])
+}
+
+@Test func viewBuilderIfElseRendersSelectedBranch() {
+    struct ContentView: View {
+
+        let usesFirstBranch: Bool
+
+        var body: some View {
+            if usesFirstBranch {
+                Text("First")
+            }
+            else {
+                Text("Second")
+            }
+        }
+    }
+
+    #expect(ViewResolver.text(from: ContentView(usesFirstBranch: true)) == "First")
+    #expect(ViewResolver.text(from: ContentView(usesFirstBranch: false)) == "Second")
+}
+
+@Test func viewBuilderConditionalBranchesFlattenMultipleChildren() {
+    struct ContentView: View {
+
+        let usesFirstBranch: Bool
+
+        var body: some View {
+            VStack(alignment: .leading) {
+                if usesFirstBranch {
+                    Text("A")
+                    Text("B")
+                }
+                else {
+                    Text("C")
+                }
+                Text("D")
+            }
+        }
+    }
+
+    #expect(ViewResolver.block(from: ContentView(usesFirstBranch: true))?.lines == ["A", "B", "D"])
+    #expect(ViewResolver.block(from: ContentView(usesFirstBranch: false))?.lines == ["C", "D"])
+}
+
+@Test func viewBuilderAvailabilityConditionsRenderSelectedBranch() {
+    struct ContentView: View {
+        var body: some View {
+            VStack(alignment: .leading) {
+                if #available(macOS 11, *) {
+                    Text("available")
+                }
+                if #available(macOS 9999, *) {
+                    Text("future")
+                }
+                else {
+                    Text("fallback")
+                }
+            }
+        }
+    }
+
+    #expect(ViewResolver.block(from: ContentView())?.lines == ["available", "fallback "])
+}
+
 @Test func groupFlattensChildrenInsideVStack() {
     let view = VStack(alignment: .leading) {
         Group {
@@ -473,6 +555,52 @@ import Testing
     }
 
     #expect(ViewResolver.text(from: scene.root) == "Hello, RetortTUI")
+}
+
+@Test func sceneResolverResolvesWindowGroupRootView() {
+    let scene = WindowGroup {
+        Text("Hello, RetortTUI")
+    }
+
+    let root = SceneResolver.rootScene(from: scene)
+
+    #expect(root != nil)
+    if let root {
+        #expect(ViewResolver.text(from: root.root) == "Hello, RetortTUI")
+    }
+}
+
+@Test func sceneBuilderAvailabilityConditionResolvesRootSceneWhenAvailable() {
+    struct ContentScene {
+        @SceneBuilder var body: some Scene {
+            if #available(macOS 11, *) {
+                WindowGroup {
+                    Text("Available scene")
+                }
+            }
+        }
+    }
+
+    let root = SceneResolver.rootScene(from: ContentScene().body)
+
+    #expect(root != nil)
+    if let root {
+        #expect(ViewResolver.text(from: root.root) == "Available scene")
+    }
+}
+
+@Test func sceneBuilderAvailabilityConditionResolvesNoRootSceneWhenUnavailable() {
+    struct ContentScene {
+        @SceneBuilder var body: some Scene {
+            if #available(macOS 9999, *) {
+                WindowGroup {
+                    Text("Future scene")
+                }
+            }
+        }
+    }
+
+    #expect(SceneResolver.rootScene(from: ContentScene().body) == nil)
 }
 
 @Test func hStackDefaultSpacingPlacesTextSideBySide() {
@@ -1633,6 +1761,45 @@ import Testing
     #expect(runtime.block(from: SiblingCounterView(probe: probe))?.lines == ["7", "4"])
 }
 
+@Test func conditionalViewBranchStateCellsAreIndependent() {
+    let runtime = StateRuntime()
+    let probe = LabeledBindingProbe()
+
+    #expect(
+        runtime.block(
+            from: ConditionalBranchStateView(usesFirstBranch: true, probe: probe)
+        )?.text == "0"
+    )
+
+    probe.bindings["first"]?.wrappedValue = 3
+
+    #expect(runtime.consumeInvalidation())
+    #expect(
+        runtime.block(
+            from: ConditionalBranchStateView(usesFirstBranch: true, probe: probe)
+        )?.text == "3"
+    )
+    #expect(
+        runtime.block(
+            from: ConditionalBranchStateView(usesFirstBranch: false, probe: probe)
+        )?.text == "0"
+    )
+
+    probe.bindings["second"]?.wrappedValue = 8
+
+    #expect(runtime.consumeInvalidation())
+    #expect(
+        runtime.block(
+            from: ConditionalBranchStateView(usesFirstBranch: false, probe: probe)
+        )?.text == "8"
+    )
+    #expect(
+        runtime.block(
+            from: ConditionalBranchStateView(usesFirstBranch: true, probe: probe)
+        )?.text == "3"
+    )
+}
+
 @Test func focusStateInitializersProvideWrappedValues() {
     struct Probe {
 
@@ -2357,6 +2524,22 @@ private struct SiblingCounterView: View {
     var body: some View {
         VStack {
             LabeledChildCounterView(label: "first", probe: probe)
+            LabeledChildCounterView(label: "second", probe: probe)
+        }
+    }
+}
+
+private struct ConditionalBranchStateView: View {
+
+    let usesFirstBranch: Bool
+
+    let probe: LabeledBindingProbe
+
+    var body: some View {
+        if usesFirstBranch {
+            LabeledChildCounterView(label: "first", probe: probe)
+        }
+        else {
             LabeledChildCounterView(label: "second", probe: probe)
         }
     }

@@ -27,7 +27,7 @@ struct AppRunner<Application: App> {
     var app: Application
 
     func run() throws {
-        guard let root = app.body as? any RootScene else {
+        guard let root = SceneResolver.rootScene(from: app.body) else {
             return
         }
 

@@ -419,6 +419,68 @@ extension Group: FlattenableViewContent {
     }
 }
 
+extension OptionalViewContent: FlattenableViewContent {
+
+    func renderedElements(
+        in proposal: RenderProposal?,
+        path: [Int],
+        runtime: StateRuntime?
+    ) -> [RenderedElement] {
+        guard let content else {
+            return []
+        }
+
+        return ViewResolver.elements(
+            from: content,
+            in: proposal,
+            path: path + [0],
+            runtime: runtime
+        )
+    }
+}
+
+extension ConditionalViewContent: FlattenableViewContent {
+
+    func renderedElements(
+        in proposal: RenderProposal?,
+        path: [Int],
+        runtime: StateRuntime?
+    ) -> [RenderedElement] {
+        switch storage {
+        case .trueContent(let content):
+            ViewResolver.elements(
+                from: content,
+                in: proposal,
+                path: path + [0],
+                runtime: runtime
+            )
+        case .falseContent(let content):
+            ViewResolver.elements(
+                from: content,
+                in: proposal,
+                path: path + [1],
+                runtime: runtime
+            )
+        }
+    }
+}
+
+extension LimitedAvailabilityViewContent: FlattenableViewContent {
+
+    func renderedElements(
+        in proposal: RenderProposal?,
+        path: [Int],
+        runtime: StateRuntime?
+    ) -> [RenderedElement] {
+        ViewResolver.elements(
+            from: content,
+            in: proposal,
+            path: path + [0],
+            runtime: runtime
+        )
+    }
+}
+
 extension ForEach: FlattenableViewContent {
 
     func renderedElements(

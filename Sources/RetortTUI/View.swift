@@ -44,12 +44,83 @@ public enum ViewBuilder {
         expression
     }
 
+    public static func buildIf<Content: View>(
+        _ content: Content?
+    ) -> OptionalViewContent<Content> {
+        OptionalViewContent(content)
+    }
+
+    public static func buildEither<TrueContent: View, FalseContent: View>(
+        first content: TrueContent
+    ) -> ConditionalViewContent<TrueContent, FalseContent> {
+        ConditionalViewContent(first: content)
+    }
+
+    public static func buildEither<TrueContent: View, FalseContent: View>(
+        second content: FalseContent
+    ) -> ConditionalViewContent<TrueContent, FalseContent> {
+        ConditionalViewContent(second: content)
+    }
+
+    public static func buildLimitedAvailability<Content: View>(
+        _ content: Content
+    ) -> LimitedAvailabilityViewContent<Content> {
+        LimitedAvailabilityViewContent(content)
+    }
+
     private static func elements<Content: View>(from content: Content) -> [AnyViewStorage] {
         if let group = content as? ViewGroup {
             return group.elements
         }
 
         return [AnyViewStorage(content)]
+    }
+}
+
+/// A view builder result that renders optional content when present.
+public struct OptionalViewContent<Content: View>: View {
+
+    public typealias Body = Never
+
+    let content: Content?
+
+    public init(_ content: Content?) {
+        self.content = content
+    }
+}
+
+/// A view builder result that renders one branch of conditional content.
+public struct ConditionalViewContent<TrueContent: View, FalseContent: View>: View {
+
+    public typealias Body = Never
+
+    enum Storage {
+
+        case trueContent(TrueContent)
+
+        case falseContent(FalseContent)
+    }
+
+    let storage: Storage
+
+    public init(first content: TrueContent) {
+        self.storage = .trueContent(content)
+    }
+
+    public init(second content: FalseContent) {
+        self.storage = .falseContent(content)
+    }
+}
+
+/// A view builder result that marks content from an availability-limited branch.
+public struct LimitedAvailabilityViewContent<Content: View>: View {
+
+    public typealias Body = Never
+
+    let content: Content
+
+    public init(_ content: Content) {
+        self.content = content
     }
 }
 
