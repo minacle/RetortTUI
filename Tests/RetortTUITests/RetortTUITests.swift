@@ -251,6 +251,47 @@ import Testing
     #expect(runtime.block(from: view)?.cursor == RenderedCursor(column: 1))
 }
 
+@Test func clickingTextFieldMovesFocusAndSubsequentTyping() {
+    let runtime = StateRuntime()
+    let focusProbe = FocusBindingProbe<FocusField?>()
+    let textProbe = LabeledStringBindingProbe()
+    let view = TwoTextFieldsClickFocusView(
+        focusProbe: focusProbe,
+        textProbe: textProbe
+    )
+
+    #expect(runtime.block(from: view)?.lines == ["first ", "second"])
+
+    #expect(
+        runtime.dispatch(
+            MouseEvent(button: .left, column: 1, row: 2, phase: .down)
+        ) == .handled
+    )
+    #expect(focusProbe.binding?.wrappedValue == .second)
+
+    #expect(runtime.consumeInvalidation())
+    _ = runtime.block(from: view)
+    #expect(runtime.dispatch(KeyPress(key: "z", characters: "z")) == .handled)
+
+    #expect(textProbe.bindings["first"]?.wrappedValue == "")
+    #expect(textProbe.bindings["second"]?.wrappedValue == "z")
+}
+
+@Test func clickingFramedTextFieldBlankAreaRequestsFocus() {
+    let runtime = StateRuntime()
+    let focusProbe = FocusBindingProbe<Bool>()
+    let view = FramedTextFieldClickFocusView(focusProbe: focusProbe)
+
+    #expect(runtime.block(from: view)?.lines == ["A    "])
+
+    #expect(
+        runtime.dispatch(
+            MouseEvent(button: .left, column: 5, row: 1, phase: .down)
+        ) == .handled
+    )
+    #expect(focusProbe.binding?.wrappedValue == true)
+}
+
 @Test func textFieldSubmitsWithReturnKey() {
     let runtime = StateRuntime()
     let view = TextFieldSubmitView()
@@ -1745,6 +1786,104 @@ import Testing
     #expect(block?.text == "A")
 }
 
+@Test func clickingFocusableTextRequestsFocus() {
+    let runtime = StateRuntime()
+    let probe = FocusBindingProbe<Bool>()
+    let view = ClickableFocusedTextView(probe: probe)
+
+    _ = runtime.block(from: view)
+
+    #expect(probe.binding?.wrappedValue == false)
+    #expect(
+        runtime.dispatch(
+            MouseEvent(button: .left, column: 1, row: 1, phase: .down)
+        ) == .handled
+    )
+    #expect(probe.binding?.wrappedValue == true)
+}
+
+@Test func clickFocusRegionRespectsPaddingAndFrameClipping() {
+    let runtime = StateRuntime()
+    let probe = FocusBindingProbe<Bool>()
+    let view = PaddedFramedClickFocusView(probe: probe)
+
+    #expect(runtime.block(from: view)?.lines == ["top", " A "])
+
+    #expect(
+        runtime.dispatch(
+            MouseEvent(button: .left, column: 1, row: 2, phase: .down)
+        ) == .ignored
+    )
+    #expect(probe.binding?.wrappedValue == false)
+
+    #expect(
+        runtime.dispatch(
+            MouseEvent(button: .left, column: 2, row: 2, phase: .down)
+        ) == .handled
+    )
+    #expect(probe.binding?.wrappedValue == true)
+}
+
+@Test func clickFocusRegionScrollsWithScrollView() {
+    let runtime = StateRuntime()
+    let probe = FocusBindingProbe<Bool>()
+    let view = ScrolledClickFocusView(probe: probe)
+
+    #expect(runtime.block(from: view)?.lines == ["B"])
+
+    #expect(
+        runtime.dispatch(
+            MouseEvent(button: .left, column: 1, row: 1, phase: .down)
+        ) == .handled
+    )
+    #expect(probe.binding?.wrappedValue == true)
+}
+
+@Test func focusableFalsePreventsClickFocus() {
+    let runtime = StateRuntime()
+    let probe = FocusBindingProbe<Bool>()
+    let view = DisabledClickFocusView(probe: probe)
+
+    _ = runtime.block(from: view)
+
+    #expect(
+        runtime.dispatch(
+            MouseEvent(button: .left, column: 1, row: 1, phase: .down)
+        ) == .ignored
+    )
+    #expect(probe.binding?.wrappedValue == false)
+}
+
+@Test func clickFocusCoexistsWithTapGesture() {
+    let runtime = StateRuntime()
+    let focusProbe = FocusBindingProbe<Bool>()
+    let tapProbe = TapGestureProbe()
+    let view = ClickFocusTapGestureView(
+        focusProbe: focusProbe,
+        tapProbe: tapProbe
+    )
+    let date = Date(timeIntervalSinceReferenceDate: 1_000)
+
+    _ = runtime.block(from: view)
+
+    #expect(
+        runtime.dispatch(
+            MouseEvent(button: .left, column: 1, row: 1, phase: .down),
+            at: date
+        ) == .handled
+    )
+    #expect(focusProbe.binding?.wrappedValue == true)
+    #expect(tapProbe.events.isEmpty)
+
+    #expect(
+        runtime.dispatch(
+            MouseEvent(button: .left, column: 1, row: 1, phase: .up),
+            at: date
+        ) == .handled
+    )
+    #expect(tapProbe.events == ["tap"])
+}
+
 @Test func keyPressModifierDoesNotChangeRenderedOutput() {
     let runtime = StateRuntime()
     let keyProbe = KeyPressProbe()
@@ -2029,6 +2168,15 @@ private final class LabeledBindingProbe {
     }
 }
 
+private final class LabeledStringBindingProbe {
+
+    var bindings: [String: Binding<String>] = [:]
+
+    func capture(_ binding: Binding<String>, label: String) {
+        bindings[label] = binding
+    }
+}
+
 private final class FocusBindingProbe<Value: Hashable> {
 
     var binding: FocusState<Value>.Binding?
@@ -2240,6 +2388,130 @@ private struct BoolFocusableThenFocusedView: View {
 
     var body: some View {
         CapturedBoolFocusableThenFocusedText(binding: $isFocused, probe: probe)
+    }
+}
+
+private struct ClickableFocusedTextView: View {
+
+    @FocusState var isFocused: Bool
+
+    let probe: FocusBindingProbe<Bool>
+
+    var body: some View {
+        CapturedFocusableText(binding: $isFocused, probe: probe)
+    }
+}
+
+private struct PaddedFramedClickFocusView: View {
+
+    @FocusState var isFocused: Bool
+
+    let probe: FocusBindingProbe<Bool>
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Text("top")
+            CapturedFocusableText(binding: $isFocused, probe: probe)
+                .padding(.leading, 1)
+                .frame(width: 3, alignment: .leading)
+        }
+    }
+}
+
+private struct ScrolledClickFocusView: View {
+
+    @FocusState var isFocused: Bool
+
+    let probe: FocusBindingProbe<Bool>
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 0) {
+                Text("A")
+                CapturedFocusableText(binding: $isFocused, probe: probe, text: "B")
+            }
+        }
+        .scrollPosition(.constant(ScrollPosition(y: 1)))
+        .frame(width: 1, height: 1)
+    }
+}
+
+private struct DisabledClickFocusView: View {
+
+    @State var text = ""
+
+    @FocusState var isFocused: Bool
+
+    let probe: FocusBindingProbe<Bool>
+
+    var body: some View {
+        CapturedDisabledClickFocusTextField(
+            text: $text,
+            binding: $isFocused,
+            probe: probe
+        )
+    }
+}
+
+private struct CapturedDisabledClickFocusTextField: View {
+
+    let text: Binding<String>
+
+    let binding: FocusState<Bool>.Binding
+
+    init(
+        text: Binding<String>,
+        binding: FocusState<Bool>.Binding,
+        probe: FocusBindingProbe<Bool>
+    ) {
+        self.text = text
+        self.binding = binding
+        probe.capture(binding)
+    }
+
+    var body: some View {
+        TextField("A", text: text)
+            .focusable(false)
+            .focused(binding)
+    }
+}
+
+private struct ClickFocusTapGestureView: View {
+
+    @FocusState var isFocused: Bool
+
+    let focusProbe: FocusBindingProbe<Bool>
+
+    let tapProbe: TapGestureProbe
+
+    var body: some View {
+        CapturedFocusableText(binding: $isFocused, probe: focusProbe)
+            .onTapGesture {
+                tapProbe.record("tap")
+            }
+    }
+}
+
+private struct CapturedFocusableText: View {
+
+    let binding: FocusState<Bool>.Binding
+
+    let text: String
+
+    init(
+        binding: FocusState<Bool>.Binding,
+        probe: FocusBindingProbe<Bool>,
+        text: String = "A"
+    ) {
+        self.binding = binding
+        self.text = text
+        probe.capture(binding)
+    }
+
+    var body: some View {
+        Text(text)
+            .focusable()
+            .focused(binding)
     }
 }
 
@@ -2482,6 +2754,102 @@ private struct TextFieldEditingView: View {
     var body: some View {
         TextField("Name", text: $text)
             .focused($isFocused)
+    }
+}
+
+private struct TwoTextFieldsClickFocusView: View {
+
+    @State var first = ""
+
+    @State var second = ""
+
+    @FocusState var field: FocusField? = .first
+
+    let focusProbe: FocusBindingProbe<FocusField?>
+
+    let textProbe: LabeledStringBindingProbe
+
+    var body: some View {
+        CapturedTwoTextFields(
+            field: $field,
+            first: $first,
+            second: $second,
+            focusProbe: focusProbe,
+            textProbe: textProbe
+        )
+    }
+}
+
+private struct FramedTextFieldClickFocusView: View {
+
+    @State var text = ""
+
+    @FocusState var isFocused: Bool
+
+    let focusProbe: FocusBindingProbe<Bool>
+
+    var body: some View {
+        CapturedFramedTextField(
+            text: $text,
+            binding: $isFocused,
+            focusProbe: focusProbe
+        )
+    }
+}
+
+private struct CapturedFramedTextField: View {
+
+    let text: Binding<String>
+
+    let binding: FocusState<Bool>.Binding
+
+    init(
+        text: Binding<String>,
+        binding: FocusState<Bool>.Binding,
+        focusProbe: FocusBindingProbe<Bool>
+    ) {
+        self.text = text
+        self.binding = binding
+        focusProbe.capture(binding)
+    }
+
+    var body: some View {
+        TextField("A", text: text)
+            .frame(width: 5, alignment: .leading)
+            .focused(binding)
+    }
+}
+
+private struct CapturedTwoTextFields: View {
+
+    let field: FocusState<FocusField?>.Binding
+
+    let first: Binding<String>
+
+    let second: Binding<String>
+
+    init(
+        field: FocusState<FocusField?>.Binding,
+        first: Binding<String>,
+        second: Binding<String>,
+        focusProbe: FocusBindingProbe<FocusField?>,
+        textProbe: LabeledStringBindingProbe
+    ) {
+        self.field = field
+        self.first = first
+        self.second = second
+        focusProbe.capture(field)
+        textProbe.capture(first, label: "first")
+        textProbe.capture(second, label: "second")
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            TextField("first", text: first)
+                .focused(field, equals: .first)
+            TextField("second", text: second)
+                .focused(field, equals: .second)
+        }
     }
 }
 

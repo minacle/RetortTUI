@@ -13,12 +13,20 @@ struct FocusableView<Content: View>: View, FocusModifierRenderable {
         runtime: StateRuntime?
     ) -> RenderedBlock? {
         runtime?.registerFocusable(isFocusable, at: path)
-        return ViewResolver.block(
+        guard var block = ViewResolver.block(
             from: content,
             in: proposal,
             path: path,
             runtime: runtime
-        )
+        ) else {
+            return nil
+        }
+
+        if isFocusable {
+            block.focusRegions.append(RenderedFocusRegion(path: path, frame: block.bounds))
+        }
+
+        return block
     }
 
     func renderedElement(
@@ -27,12 +35,21 @@ struct FocusableView<Content: View>: View, FocusModifierRenderable {
         runtime: StateRuntime?
     ) -> RenderedElement? {
         runtime?.registerFocusable(isFocusable, at: path)
-        return ViewResolver.element(
+        guard let element = ViewResolver.element(
             from: content,
             in: proposal,
             path: path,
             runtime: runtime
-        )
+        ) else {
+            return nil
+        }
+
+        guard isFocusable, case .block(var block) = element else {
+            return element
+        }
+
+        block.focusRegions.append(RenderedFocusRegion(path: path, frame: block.bounds))
+        return .block(block)
     }
 }
 

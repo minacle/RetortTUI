@@ -209,6 +209,7 @@ final class StateRuntime {
         let block = ViewResolver.block(from: view, in: proposal, path: [], runtime: self)
         input.updateHitRegions(block?.hitRegions ?? [])
         input.updateScrollRegions(block?.scrollRegions ?? [])
+        input.updateFocusRegions(block?.focusRegions ?? [])
         return block
     }
 
@@ -386,6 +387,13 @@ final class StateRuntime {
             at: date,
             perform: { path, operation in
                 withView(at: path, perform: operation)
+            },
+            focus: { path in
+                let result = focus.requestFocus(at: path)
+                if result.changed {
+                    invalidated = true
+                }
+                return result.handled
             },
             scroll: { path, mouseEvent in
                 dispatchScroll(mouseEvent, at: path)
@@ -580,13 +588,14 @@ private final class FocusCell<Value: Hashable> {
         self.nextGeneration = nextGeneration
     }
 
+    @discardableResult
     func setValue(
         _ newValue: Value,
         invalidates: Bool = true,
         recordsRequest: Bool = true
-    ) {
+    ) -> Bool {
         guard value != newValue else {
-            return
+            return false
         }
 
         value = newValue
@@ -598,6 +607,8 @@ private final class FocusCell<Value: Hashable> {
         if invalidates {
             invalidate()
         }
+
+        return true
     }
 }
 
@@ -762,9 +773,11 @@ protocol FocusAttachment {
 
     func matches(_ request: FocusRequest) -> Bool
 
-    func setActive()
+    @discardableResult
+    func setActive() -> Bool
 
-    func clear()
+    @discardableResult
+    func clear() -> Bool
 }
 
 private struct BoolFocusAttachment: FocusAttachment {
@@ -791,11 +804,11 @@ private struct BoolFocusAttachment: FocusAttachment {
         request.bindingID == bindingID && request.value == AnyHashable(true)
     }
 
-    func setActive() {
+    func setActive() -> Bool {
         binding.cell.setValue(true, invalidates: false, recordsRequest: false)
     }
 
-    func clear() {
+    func clear() -> Bool {
         binding.cell.setValue(false, invalidates: false, recordsRequest: false)
     }
 }
@@ -826,11 +839,11 @@ private struct OptionalFocusAttachment<Value: Hashable>: FocusAttachment {
         request.bindingID == bindingID && request.value == AnyHashable(value)
     }
 
-    func setActive() {
+    func setActive() -> Bool {
         binding.cell.setValue(value, invalidates: false, recordsRequest: false)
     }
 
-    func clear() {
+    func clear() -> Bool {
         binding.cell.setValue(nil, invalidates: false, recordsRequest: false)
     }
 }
@@ -860,6 +873,13 @@ private final class FocusRuntime {
         var attachments: [any FocusAttachment]
     }
 
+    struct RequestResult {
+
+        var handled: Bool
+
+        var changed: Bool
+    }
+
     private var pathsInRenderOrder: [[Int]] = []
 
     private var focusablePaths: Set<[Int]> = []
@@ -869,6 +889,8 @@ private final class FocusRuntime {
     private var attachmentsByPath: [[Int]: [any FocusAttachment]] = [:]
 
     private var allAttachments: [any FocusAttachment] = []
+
+    private var candidates: [Candidate] = []
 
     private(set) var activePath: [Int]?
 
@@ -899,7 +921,7 @@ private final class FocusRuntime {
     }
 
     func finishRender() -> Bool {
-        let candidates = pathsInRenderOrder.compactMap { path -> Candidate? in
+        candidates = pathsInRenderOrder.compactMap { path -> Candidate? in
             guard focusablePaths.contains(path),
                   !disabledPaths.contains(path),
                   let attachments = attachmentsByPath[path],
@@ -912,8 +934,22 @@ private final class FocusRuntime {
 
         let previousActivePath = activePath
         activePath = activePath(for: candidates)
-        syncAttachments(for: candidates.first { $0.path == activePath })
-        return activePath != previousActivePath
+        let attachmentsChanged = syncAttachments(for: candidates.first { $0.path == activePath })
+        return activePath != previousActivePath || attachmentsChanged
+    }
+
+    func requestFocus(at path: [Int]) -> RequestResult {
+        guard let candidate = candidates.first(where: { $0.path == path }) else {
+            return RequestResult(handled: false, changed: false)
+        }
+
+        let previousActivePath = activePath
+        activePath = candidate.path
+        let attachmentsChanged = syncAttachments(for: candidate)
+        return RequestResult(
+            handled: true,
+            changed: activePath != previousActivePath || attachmentsChanged
+        )
     }
 
     private func activePath(for candidates: [Candidate]) -> [Int]? {
@@ -939,13 +975,14 @@ private final class FocusRuntime {
             .0
     }
 
-    private func syncAttachments(for activeCandidate: Candidate?) {
+    private func syncAttachments(for activeCandidate: Candidate?) -> Bool {
+        var changed = false
         var activeBindingIDs = Set<ObjectIdentifier>()
         if let activeCandidate {
             for attachment in activeCandidate.attachments
                 where !activeBindingIDs.contains(attachment.bindingID) {
                 activeBindingIDs.insert(attachment.bindingID)
-                attachment.setActive()
+                changed = attachment.setActive() || changed
             }
         }
 
@@ -954,8 +991,10 @@ private final class FocusRuntime {
             where !activeBindingIDs.contains(attachment.bindingID)
                 && !clearedBindingIDs.contains(attachment.bindingID) {
             clearedBindingIDs.insert(attachment.bindingID)
-            attachment.clear()
+            changed = attachment.clear() || changed
         }
+
+        return changed
     }
 
     private func registerPath(_ path: [Int]) {

@@ -125,6 +125,23 @@ struct RenderedScrollRegion: Equatable, Sendable {
     }
 }
 
+struct RenderedFocusRegion: Equatable, Sendable {
+
+    var path: [Int]
+
+    var frame: RenderedRect
+
+    func offsetBy(x: Int, y: Int) -> RenderedFocusRegion {
+        RenderedFocusRegion(path: path, frame: frame.offsetBy(x: x, y: y))
+    }
+
+    func clipped(to bounds: RenderedRect) -> RenderedFocusRegion? {
+        frame.clipped(to: bounds).map {
+            RenderedFocusRegion(path: path, frame: $0)
+        }
+    }
+}
+
 struct RenderedBlock: Equatable, Sendable {
 
     var lines: [String]
@@ -135,16 +152,20 @@ struct RenderedBlock: Equatable, Sendable {
 
     var scrollRegions: [RenderedScrollRegion]
 
+    var focusRegions: [RenderedFocusRegion]
+
     init(
         lines: [String],
         cursor: RenderedCursor? = nil,
         hitRegions: [RenderedHitRegion] = [],
-        scrollRegions: [RenderedScrollRegion] = []
+        scrollRegions: [RenderedScrollRegion] = [],
+        focusRegions: [RenderedFocusRegion] = []
     ) {
         self.lines = lines
         self.cursor = cursor
         self.hitRegions = hitRegions
         self.scrollRegions = scrollRegions
+        self.focusRegions = focusRegions
     }
 
     var text: String {
@@ -193,7 +214,8 @@ struct RenderedBlock: Equatable, Sendable {
             lines: lines,
             cursor: framedCursor(x: x, y: y, width: targetWidth, height: targetHeight),
             hitRegions: framedHitRegions(x: x, y: y, width: targetWidth, height: targetHeight),
-            scrollRegions: framedScrollRegions(x: x, y: y, width: targetWidth, height: targetHeight)
+            scrollRegions: framedScrollRegions(x: x, y: y, width: targetWidth, height: targetHeight),
+            focusRegions: framedFocusRegions(x: x, y: y, width: targetWidth, height: targetHeight)
         )
     }
 
@@ -218,6 +240,9 @@ struct RenderedBlock: Equatable, Sendable {
                 $0.offsetBy(x: insets.leading, y: insets.top)
             },
             scrollRegions: scrollRegions.map {
+                $0.offsetBy(x: insets.leading, y: insets.top)
+            },
+            focusRegions: focusRegions.map {
                 $0.offsetBy(x: insets.leading, y: insets.top)
             }
         )
@@ -281,6 +306,18 @@ struct RenderedBlock: Equatable, Sendable {
     ) -> [RenderedScrollRegion] {
         let bounds = RenderedRect(width: targetWidth, height: targetHeight)
         return scrollRegions.compactMap {
+            $0.offsetBy(x: x, y: y).clipped(to: bounds)
+        }
+    }
+
+    private func framedFocusRegions(
+        x: Int,
+        y: Int,
+        width targetWidth: Int,
+        height targetHeight: Int
+    ) -> [RenderedFocusRegion] {
+        let bounds = RenderedRect(width: targetWidth, height: targetHeight)
+        return focusRegions.compactMap {
             $0.offsetBy(x: x, y: y).clipped(to: bounds)
         }
     }
@@ -866,7 +903,8 @@ enum StackRenderer {
             lines: lines,
             cursor: horizontalCursor(from: items, height: height, alignment: alignment),
             hitRegions: horizontalHitRegions(from: items, height: height, alignment: alignment),
-            scrollRegions: horizontalScrollRegions(from: items, height: height, alignment: alignment)
+            scrollRegions: horizontalScrollRegions(from: items, height: height, alignment: alignment),
+            focusRegions: horizontalFocusRegions(from: items, height: height, alignment: alignment)
         )
     }
 
@@ -908,7 +946,8 @@ enum StackRenderer {
             lines: lines,
             cursor: verticalCursor(from: items, width: width, alignment: alignment),
             hitRegions: verticalHitRegions(from: items, width: width, alignment: alignment),
-            scrollRegions: verticalScrollRegions(from: items, width: width, alignment: alignment)
+            scrollRegions: verticalScrollRegions(from: items, width: width, alignment: alignment),
+            focusRegions: verticalFocusRegions(from: items, width: width, alignment: alignment)
         )
     }
 
@@ -1093,6 +1132,27 @@ enum StackRenderer {
         }
     }
 
+    private static func horizontalFocusRegions(
+        from items: [HorizontalItem],
+        height: Int,
+        alignment: VerticalAlignment
+    ) -> [RenderedFocusRegion] {
+        items.flatMap { item -> [RenderedFocusRegion] in
+            guard let block = item.block else {
+                return []
+            }
+
+            let y = verticalOffset(
+                contentHeight: block.height,
+                containerHeight: height,
+                alignment: alignment
+            )
+            return block.focusRegions.map {
+                $0.offsetBy(x: item.x, y: y)
+            }
+        }
+    }
+
     private static func verticalCursor(
         from items: [VerticalItem],
         width: Int,
@@ -1153,6 +1213,27 @@ enum StackRenderer {
                 alignment: alignment
             )
             return block.scrollRegions.map {
+                $0.offsetBy(x: x, y: item.y)
+            }
+        }
+    }
+
+    private static func verticalFocusRegions(
+        from items: [VerticalItem],
+        width: Int,
+        alignment: HorizontalAlignment
+    ) -> [RenderedFocusRegion] {
+        items.flatMap { item -> [RenderedFocusRegion] in
+            guard let block = item.block else {
+                return []
+            }
+
+            let x = horizontalOffset(
+                contentWidth: block.width,
+                containerWidth: width,
+                alignment: alignment
+            )
+            return block.focusRegions.map {
                 $0.offsetBy(x: x, y: item.y)
             }
         }

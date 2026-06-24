@@ -378,6 +378,13 @@ enum ScrollViewRenderer {
                     width: width,
                     height: height,
                     constrainToBounds: proposal?.columns != nil
+                ),
+                focusRegions: focusRegions(
+                    from: content.focusRegions,
+                    x: clampedX,
+                    y: clampedY,
+                    width: width,
+                    height: height
                 )
             ),
             point: ScrollPoint(x: clampedX, y: clampedY),
@@ -418,6 +425,19 @@ enum ScrollViewRenderer {
             offset += 1
         }
         return offset
+    }
+
+    private static func focusRegions(
+        from regions: [RenderedFocusRegion],
+        x: Int,
+        y: Int,
+        width: Int,
+        height: Int
+    ) -> [RenderedFocusRegion] {
+        let bounds = RenderedRect(width: width, height: height)
+        return regions.compactMap {
+            $0.offsetBy(x: -x, y: -y).clipped(to: bounds)
+        }
     }
 
     private static func resolvedPoint(

@@ -160,12 +160,14 @@ extension TextField {
             cursor: renderedCursor(cursor: cursor, isFocused: isFocused)
         )
 
-        return ScrollViewRenderer.render(
+        var block = ScrollViewRenderer.render(
             content,
             axes: .horizontal,
             position: ScrollPosition(x: scrollColumn),
             proposal: RenderProposal(columns: proposal?.columns, rows: 1)
         ).block
+        block.focusRegions.append(RenderedFocusRegion(path: path, frame: block.bounds))
+        return block
     }
 
     private var displayText: String {

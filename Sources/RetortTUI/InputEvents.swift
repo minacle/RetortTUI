@@ -410,6 +410,8 @@ final class InputRuntime {
 
     private var scrollRegions: [RenderedScrollRegion] = []
 
+    private var focusRegions: [RenderedFocusRegion] = []
+
     private var rootFrame = TextFrame(text: "", row: 1, column: 1)
 
     private var pressedTapTarget: [Int]?
@@ -441,6 +443,10 @@ final class InputRuntime {
 
     func updateScrollRegions(_ scrollRegions: [RenderedScrollRegion]) {
         self.scrollRegions = scrollRegions
+    }
+
+    func updateFocusRegions(_ focusRegions: [RenderedFocusRegion]) {
+        self.focusRegions = focusRegions
     }
 
     func updateRootFrame(_ frame: TextFrame) {
@@ -486,6 +492,7 @@ final class InputRuntime {
         _ mouseEvent: MouseEvent,
         at date: Date,
         perform: ([Int], () -> Void) -> Void,
+        focus: ([Int]) -> Bool,
         scroll: ([Int], MouseEvent) -> KeyPress.Result
     ) -> KeyPress.Result {
         _ = dispatchExpiredTapActions(at: date, perform: perform)
@@ -502,8 +509,11 @@ final class InputRuntime {
 
         switch mouseEvent.phase {
         case .down:
+            let focused = focusTargets(at: mouseEvent).contains {
+                focus($0)
+            }
             pressedTapTarget = tapTarget(at: mouseEvent)
-            return pressedTapTarget == nil ? .ignored : .handled
+            return focused || pressedTapTarget != nil ? .handled : .ignored
         case .up:
             guard let pressedTapTarget else {
                 return .ignored
@@ -559,6 +569,23 @@ final class InputRuntime {
                 return $0.frame.area > $1.frame.area
             }?
             .path
+    }
+
+    private func focusTargets(at mouseEvent: MouseEvent) -> [[Int]] {
+        let column = mouseEvent.column - rootFrame.column
+        let row = mouseEvent.row - rootFrame.row
+        return focusRegions
+            .filter {
+                $0.frame.contains(column: column, row: row)
+            }
+            .sorted {
+                if $0.path.count != $1.path.count {
+                    return $0.path.count > $1.path.count
+                }
+
+                return $0.frame.area < $1.frame.area
+            }
+            .map(\.path)
     }
 
     private func dispatchScroll(

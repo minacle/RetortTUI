@@ -152,6 +152,11 @@ extension GeometryReader: GeometryReaderRenderable {
                 block.scrollRegions,
                 width: targetWidth,
                 height: targetHeight
+            ),
+            focusRegions: frameFocusRegions(
+                block.focusRegions,
+                width: targetWidth,
+                height: targetHeight
             )
         )
     }
@@ -193,6 +198,17 @@ extension GeometryReader: GeometryReaderRenderable {
     ) -> [RenderedScrollRegion] {
         let bounds = RenderedRect(width: width, height: height)
         return scrollRegions.compactMap {
+            $0.clipped(to: bounds)
+        }
+    }
+
+    private func frameFocusRegions(
+        _ focusRegions: [RenderedFocusRegion],
+        width: Int,
+        height: Int
+    ) -> [RenderedFocusRegion] {
+        let bounds = RenderedRect(width: width, height: height)
+        return focusRegions.compactMap {
             $0.clipped(to: bounds)
         }
     }
