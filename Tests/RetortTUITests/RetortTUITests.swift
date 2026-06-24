@@ -1,4 +1,9 @@
 import Foundation
+#if canImport(Combine)
+import Combine
+#else
+import OpenCombine
+#endif
 import Testing
 @testable import RetortTUI
 
@@ -1650,6 +1655,194 @@ import Testing
     #expect(state.wrappedValue == 3)
 }
 
+@Test func observableObjectDefaultPublisherIsStablePerObject() {
+    let first = TestObservableModel()
+    let second = TestObservableModel()
+
+    #expect(first.objectWillChange === first.objectWillChange)
+    #expect(first.objectWillChange !== second.objectWillChange)
+}
+
+@Test func publishedSendsObjectWillChangeBeforeStoringNewValue() {
+    let model = TestObservableModel(count: 1)
+    var observedValues: [Int] = []
+    let subscription = model.objectWillChange.sink {
+        observedValues.append(model.count)
+    }
+
+    model.count = 2
+    subscription.cancel()
+
+    #expect(observedValues == [1])
+    #expect(model.count == 2)
+}
+
+@Test func stateObjectInitializesOnceForStableViewIdentity() {
+    let runtime = StateRuntime()
+    let creationProbe = ObjectCreationProbe()
+    let objectProbe = ObjectProbe<TestObservableModel>()
+
+    #expect(
+        runtime.block(
+            from: StateObjectCounterView(
+                initialCount: 1,
+                creationProbe: creationProbe,
+                objectProbe: objectProbe
+            )
+        )?.text == "1"
+    )
+    #expect(creationProbe.createdIDs == [1])
+
+    #expect(
+        runtime.block(
+            from: StateObjectCounterView(
+                initialCount: 9,
+                creationProbe: creationProbe,
+                objectProbe: objectProbe
+            )
+        )?.text == "1"
+    )
+    #expect(creationProbe.createdIDs == [1])
+}
+
+@Test func stateObjectChangeInvalidatesAndRerendersRootView() {
+    let runtime = StateRuntime()
+    let creationProbe = ObjectCreationProbe()
+    let objectProbe = ObjectProbe<TestObservableModel>()
+
+    #expect(
+        runtime.block(
+            from: StateObjectCounterView(
+                initialCount: 1,
+                creationProbe: creationProbe,
+                objectProbe: objectProbe
+            )
+        )?.text == "1"
+    )
+
+    objectProbe.object?.count = 3
+
+    #expect(runtime.consumeInvalidation())
+    #expect(
+        runtime.block(
+            from: StateObjectCounterView(
+                initialCount: 1,
+                creationProbe: creationProbe,
+                objectProbe: objectProbe
+            )
+        )?.text == "3"
+    )
+}
+
+@Test func stateObjectProjectionCreatesPropertyBinding() {
+    let runtime = StateRuntime()
+    let creationProbe = ObjectCreationProbe()
+    let objectProbe = ObjectProbe<TestObservableModel>()
+    let bindingProbe = BindingProbe<Int>()
+
+    #expect(
+        runtime.block(
+            from: StateObjectCounterView(
+                initialCount: 1,
+                creationProbe: creationProbe,
+                objectProbe: objectProbe,
+                bindingProbe: bindingProbe
+            )
+        )?.text == "1"
+    )
+
+    bindingProbe.binding?.wrappedValue = 4
+
+    #expect(objectProbe.object?.count == 4)
+    #expect(runtime.consumeInvalidation())
+    #expect(
+        runtime.block(
+            from: StateObjectCounterView(
+                initialCount: 1,
+                creationProbe: creationProbe,
+                objectProbe: objectProbe,
+                bindingProbe: bindingProbe
+            )
+        )?.text == "4"
+    )
+}
+
+@Test func observedObjectChangeInvalidatesRootView() {
+    let runtime = StateRuntime()
+    let model = TestObservableModel(count: 1)
+    let bindingProbe = BindingProbe<Int>()
+
+    #expect(
+        runtime.block(
+            from: ObservedObjectCounterView(model: model, bindingProbe: bindingProbe)
+        )?.text == "1"
+    )
+
+    model.count = 2
+
+    #expect(runtime.consumeInvalidation())
+    #expect(
+        runtime.block(
+            from: ObservedObjectCounterView(model: model, bindingProbe: bindingProbe)
+        )?.text == "2"
+    )
+}
+
+@Test func observedObjectReplacesSubscriptionWhenInputObjectChanges() {
+    let runtime = StateRuntime()
+    let first = TestObservableModel(count: 1)
+    let second = TestObservableModel(count: 10)
+    let bindingProbe = BindingProbe<Int>()
+
+    #expect(
+        runtime.block(
+            from: ObservedObjectCounterView(model: first, bindingProbe: bindingProbe)
+        )?.text == "1"
+    )
+    #expect(
+        runtime.block(
+            from: ObservedObjectCounterView(model: second, bindingProbe: bindingProbe)
+        )?.text == "10"
+    )
+    #expect(runtime.consumeInvalidation())
+
+    first.count = 2
+    #expect(!runtime.consumeInvalidation())
+
+    second.count = 11
+    #expect(runtime.consumeInvalidation())
+    #expect(
+        runtime.block(
+            from: ObservedObjectCounterView(model: second, bindingProbe: bindingProbe)
+        )?.text == "11"
+    )
+}
+
+@Test func forEachDeletedIDReinsertedStartsFreshStateObject() {
+    let runtime = StateRuntime()
+    let creationProbe = ObjectCreationProbe()
+    let item = ForEachTestItem(id: "a", label: "A")
+
+    #expect(
+        runtime.block(
+            from: ForEachStateObjectView(items: [item], creationProbe: creationProbe)
+        )?.text == "1"
+    )
+    #expect(creationProbe.createdIDs == [1])
+
+    #expect(
+        runtime.block(
+            from: ForEachStateObjectView(items: [], creationProbe: creationProbe)
+        ) == nil
+    )
+    #expect(
+        runtime.block(
+            from: ForEachStateObjectView(items: [item], creationProbe: creationProbe)
+        )?.text == "2"
+    )
+    #expect(creationProbe.createdIDs == [1, 2])
+}
+
 @Test func bindingReadsAndWritesWithClosures() {
     var value = 1
     let binding = Binding(
@@ -2344,6 +2537,38 @@ private final class LabeledStringBindingProbe {
     }
 }
 
+private final class ObjectProbe<ObjectType: AnyObject> {
+
+    var object: ObjectType?
+
+    func capture(_ object: ObjectType) {
+        self.object = object
+    }
+}
+
+private final class ObjectCreationProbe {
+
+    private(set) var createdIDs: [Int] = []
+
+    func nextID() -> Int {
+        let id = createdIDs.count + 1
+        createdIDs.append(id)
+        return id
+    }
+}
+
+private final class TestObservableModel: ObservableObject {
+
+    let id: Int
+
+    @Published var count: Int
+
+    init(count: Int = 0, creationProbe: ObjectCreationProbe? = nil) {
+        self.id = creationProbe?.nextID() ?? 0
+        self.count = count
+    }
+}
+
 private final class FocusBindingProbe<Value: Hashable> {
 
     var binding: FocusState<Value>.Binding?
@@ -2560,6 +2785,102 @@ private struct LabeledChildCounterView: View {
             label: label,
             probe: probe
         )
+    }
+}
+
+private struct StateObjectCounterView: View {
+
+    @StateObject private var model: TestObservableModel
+
+    let objectProbe: ObjectProbe<TestObservableModel>
+
+    let bindingProbe: BindingProbe<Int>?
+
+    init(
+        initialCount: Int,
+        creationProbe: ObjectCreationProbe,
+        objectProbe: ObjectProbe<TestObservableModel>,
+        bindingProbe: BindingProbe<Int>? = nil
+    ) {
+        _model = StateObject(
+            wrappedValue: TestObservableModel(
+                count: initialCount,
+                creationProbe: creationProbe
+            )
+        )
+        self.objectProbe = objectProbe
+        self.bindingProbe = bindingProbe
+    }
+
+    var body: some View {
+        CapturedObservableCounterText(
+            model: model,
+            binding: $model.count,
+            objectProbe: objectProbe,
+            bindingProbe: bindingProbe
+        )
+    }
+}
+
+private struct ObservedObjectCounterView: View {
+
+    @ObservedObject var model: TestObservableModel
+
+    let bindingProbe: BindingProbe<Int>
+
+    var body: some View {
+        CapturedCounterText(model.count, binding: $model.count, probe: bindingProbe)
+    }
+}
+
+private struct ForEachStateObjectView: View {
+
+    let items: [ForEachTestItem]
+
+    let creationProbe: ObjectCreationProbe
+
+    var body: some View {
+        ForEach(items, id: \.id) { item in
+            StateObjectRow(label: item.label, creationProbe: creationProbe)
+        }
+    }
+}
+
+private struct StateObjectRow: View {
+
+    @StateObject private var model: TestObservableModel
+
+    let label: String
+
+    init(label: String, creationProbe: ObjectCreationProbe) {
+        _model = StateObject(
+            wrappedValue: TestObservableModel(creationProbe: creationProbe)
+        )
+        self.label = label
+    }
+
+    var body: some View {
+        Text("\(model.id)")
+    }
+}
+
+private struct CapturedObservableCounterText: View {
+
+    let text: String
+
+    init(
+        model: TestObservableModel,
+        binding: Binding<Int>,
+        objectProbe: ObjectProbe<TestObservableModel>,
+        bindingProbe: BindingProbe<Int>?
+    ) {
+        self.text = String(model.count)
+        objectProbe.capture(model)
+        bindingProbe?.capture(binding)
+    }
+
+    var body: some View {
+        Text(text)
     }
 }
 

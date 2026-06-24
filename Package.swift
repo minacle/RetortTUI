@@ -31,6 +31,10 @@ let package = Package(
             url: "https://github.com/minacle/swift-termios",
             branch: "main"
         ),
+        .package(
+            url: "https://github.com/OpenSwiftUIProject/OpenCombine.git",
+            from: "0.15.0"
+        ),
     ],
     targets: [
         .target(
@@ -47,6 +51,11 @@ let package = Package(
                 .product(
                     name: "Termios",
                     package: "swift-termios"
+                ),
+                .product(
+                    name: "OpenCombine",
+                    package: "OpenCombine",
+                    condition: .when(platforms: [.linux])
                 ),
             ]
         ),

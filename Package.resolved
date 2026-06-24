@@ -1,6 +1,15 @@
 {
-  "originHash" : "7ead17438557591ac7cd7019d99f79d690eb7c0b9ea7c10c82dab08469bd3bdc",
+  "originHash" : "391ef3fd6c17b86b54ea4db173b0152ba2d421eaf7d41b2d768aa513ea510dd3",
   "pins" : [
+    {
+      "identity" : "opencombine",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/OpenSwiftUIProject/OpenCombine.git",
+      "state" : {
+        "revision" : "63aef318cb3a853bcb8d774cce15f4dcb1ccdfe4",
+        "version" : "0.15.1"
+      }
+    },
     {
       "identity" : "swift-numerics",
       "kind" : "remoteSourceControl",

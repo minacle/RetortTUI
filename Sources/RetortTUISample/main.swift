@@ -1,4 +1,9 @@
 import Foundation
+#if canImport(Combine)
+import Combine
+#else
+import OpenCombine
+#endif
 import RetortTUI
 
 @main
@@ -31,10 +36,12 @@ private struct SampleRoot: View {
 
     @State private var allAxisScroll = ScrollPosition(point: ScrollPoint(x: 0, y: 0))
 
+    @StateObject private var observableCounter = SampleObservableCounter()
+
     var body: some View {
         VStack(alignment: .leading, spacing: 1) {
             Text("RetortTUI sample")
-            Text("Tab/Shift-Tab changes focus | Esc clears focus | Ctrl-C exits")
+            Text("Tab/Shift-Tab changes focus | + increments object | Esc clears focus | Ctrl-C exits")
 
             HStack(alignment: .top, spacing: 4) {
                 InputAndFocusDemo(
@@ -52,7 +59,10 @@ private struct SampleRoot: View {
                 )
             }
 
-            LayoutAndBindingDemo(profile: $profile)
+            LayoutAndBindingDemo(
+                profile: $profile,
+                observableCounter: observableCounter
+            )
         }
         .padding(.horizontal, 1)
         .onKeyPress(.tab) {
@@ -77,6 +87,13 @@ private struct SampleRoot: View {
             _ in
 
             scrollAllAxes(to: .bottom)
+            return .handled
+        }
+        .onKeyPress(characters: CharacterSet(charactersIn: "+")) {
+            _ in
+
+            observableCounter.count += 1
+            keyStatus = "object count \(observableCounter.count)"
             return .handled
         }
     }
@@ -115,6 +132,11 @@ private struct Profile {
     var email = ""
 
     var note = "dynamic member binding"
+}
+
+private final class SampleObservableCounter: ObservableObject {
+
+    @Published var count = 0
 }
 
 private struct InputAndFocusDemo: View {
@@ -363,6 +385,8 @@ private struct LayoutAndBindingDemo: View {
 
     @Binding var profile: Profile
 
+    @ObservedObject var observableCounter: SampleObservableCounter
+
     var body: some View {
         VStack(alignment: .leading, spacing: 1) {
             Text("Layout, geometry, and state")
@@ -479,6 +503,15 @@ private struct LayoutAndBindingDemo: View {
                 if !profile.email.isEmpty {
                     Text("email set")
                 }
+            }
+
+            HStack(spacing: 2) {
+                RowLabel("object")
+                Text("count \(observableCounter.count)")
+                Text("[+]")
+                    .onTapGesture {
+                        observableCounter.count += 1
+                    }
             }
 
             HStack(spacing: 2) {

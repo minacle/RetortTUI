@@ -1,4 +1,9 @@
 import Foundation
+#if canImport(Combine)
+public import Combine
+#else
+public import OpenCombine
+#endif
 
 /// A two-way connection to a value owned by a source of truth.
 @dynamicMemberLookup
@@ -102,6 +107,98 @@ public extension State where Value: ExpressibleByNilLiteral {
 
     init() {
         self.init(wrappedValue: nil)
+    }
+}
+
+/// A property wrapper type that instantiates an observable object.
+@propertyWrapper
+public struct StateObject<ObjectType: ObservableObject> {
+
+    private let storage: StateObjectStorage<ObjectType>
+
+    public var wrappedValue: ObjectType {
+        cell.value
+    }
+
+    public var projectedValue: ObservedObject<ObjectType>.Wrapper {
+        ObservedObject<ObjectType>.Wrapper(object: wrappedValue)
+    }
+
+    public init(wrappedValue createObject: @autoclosure @escaping () -> ObjectType) {
+        self.storage = StateObjectStorage(createObject: createObject)
+    }
+
+    public init(initialValue createObject: @autoclosure @escaping () -> ObjectType) {
+        self.init(wrappedValue: createObject())
+    }
+
+    private var cell: ObservableObjectCell<ObjectType> {
+        guard let context = StateRenderContext.current else {
+            return storage.fallback
+        }
+
+        return context.stateObjectCell(for: storage)
+    }
+}
+
+/// A property wrapper type that observes an observable object owned elsewhere.
+@propertyWrapper
+public struct ObservedObject<ObjectType: ObservableObject> {
+
+    private let storage: ObservedObjectStorage<ObjectType>
+
+    public var wrappedValue: ObjectType {
+        get {
+            cell.value
+        }
+        nonmutating set {
+            storage.object = newValue
+            cell.updateValue(newValue)
+        }
+    }
+
+    public var projectedValue: Wrapper {
+        Wrapper(object: wrappedValue)
+    }
+
+    public init(wrappedValue object: ObjectType) {
+        self.storage = ObservedObjectStorage(object: object)
+    }
+
+    public init(initialValue object: ObjectType) {
+        self.init(wrappedValue: object)
+    }
+
+    private var cell: ObservableObjectCell<ObjectType> {
+        guard let context = StateRenderContext.current else {
+            return storage.fallback
+        }
+
+        return context.observedObjectCell(for: storage)
+    }
+
+    /// A wrapper that creates bindings to properties of the observed object.
+    @dynamicMemberLookup
+    public struct Wrapper {
+
+        private let object: ObjectType
+
+        fileprivate init(object: ObjectType) {
+            self.object = object
+        }
+
+        public subscript<Subject>(
+            dynamicMember keyPath: ReferenceWritableKeyPath<ObjectType, Subject>
+        ) -> Binding<Subject> {
+            Binding(
+                get: {
+                    object[keyPath: keyPath]
+                },
+                set: { newValue in
+                    object[keyPath: keyPath] = newValue
+                }
+            )
+        }
     }
 }
 
@@ -279,6 +376,41 @@ final class StateRuntime {
                 return focusGeneration
             }
         )
+        cells[key] = cell
+        return cell
+    }
+
+    fileprivate func stateObjectCell<ObjectType: ObservableObject>(
+        for key: StateKey,
+        createObject: () -> ObjectType
+    ) -> ObservableObjectCell<ObjectType> {
+        if let cell = cells[key] as? ObservableObjectCell<ObjectType> {
+            return cell
+        }
+
+        let cell = ObservableObjectCell(value: createObject()) {
+            [weak self] in
+
+            self?.invalidated = true
+        }
+        cells[key] = cell
+        return cell
+    }
+
+    fileprivate func observedObjectCell<ObjectType: ObservableObject>(
+        for key: StateKey,
+        object: ObjectType
+    ) -> ObservableObjectCell<ObjectType> {
+        if let cell = cells[key] as? ObservableObjectCell<ObjectType> {
+            cell.updateValue(object)
+            return cell
+        }
+
+        let cell = ObservableObjectCell(value: object) {
+            [weak self] in
+
+            self?.invalidated = true
+        }
         cells[key] = cell
         return cell
     }
@@ -552,6 +684,53 @@ private final class FocusStateStorage<Value: Hashable> {
     }
 }
 
+private final class StateObjectStorage<ObjectType: ObservableObject> {
+
+    let createObject: () -> ObjectType
+
+    var key: StateKey?
+
+    private var fallbackCell: ObservableObjectCell<ObjectType>?
+
+    var fallback: ObservableObjectCell<ObjectType> {
+        if let fallbackCell {
+            return fallbackCell
+        }
+
+        let cell = ObservableObjectCell(value: createObject(), invalidate: {})
+        fallbackCell = cell
+        return cell
+    }
+
+    init(createObject: @escaping () -> ObjectType) {
+        self.createObject = createObject
+    }
+}
+
+private final class ObservedObjectStorage<ObjectType: ObservableObject> {
+
+    var object: ObjectType
+
+    var key: StateKey?
+
+    private var fallbackCell: ObservableObjectCell<ObjectType>?
+
+    var fallback: ObservableObjectCell<ObjectType> {
+        if let fallbackCell {
+            fallbackCell.updateValue(object)
+            return fallbackCell
+        }
+
+        let cell = ObservableObjectCell(value: object, invalidate: {})
+        fallbackCell = cell
+        return cell
+    }
+
+    init(object: ObjectType) {
+        self.object = object
+    }
+}
+
 private final class StateCell<Value> {
 
     private let invalidate: () -> Void
@@ -565,6 +744,39 @@ private final class StateCell<Value> {
     init(value: Value, invalidate: @escaping () -> Void) {
         self.value = value
         self.invalidate = invalidate
+    }
+}
+
+private final class ObservableObjectCell<ObjectType: ObservableObject> {
+
+    private let invalidate: () -> Void
+
+    private var subscription: AnyCancellable?
+
+    private(set) var value: ObjectType
+
+    init(value: ObjectType, invalidate: @escaping () -> Void) {
+        self.value = value
+        self.invalidate = invalidate
+        subscribe(to: value)
+    }
+
+    func updateValue(_ newValue: ObjectType) {
+        guard value !== newValue else {
+            return
+        }
+
+        value = newValue
+        subscribe(to: newValue)
+        invalidate()
+    }
+
+    private func subscribe(to object: ObjectType) {
+        subscription = object.objectWillChange.sink {
+            [weak self] _ in
+
+            self?.invalidate()
+        }
     }
 }
 
@@ -640,6 +852,10 @@ private struct StateKey: Hashable {
     enum Kind: Hashable {
 
         case state
+
+        case stateObject
+
+        case observedObject
 
         case focus
     }
@@ -746,6 +962,50 @@ private final class StateRenderContext {
         }
 
         return runtime.focusCell(for: key, initialValue: storage.initialValue)
+    }
+
+    func stateObjectCell<ObjectType: ObservableObject>(
+        for storage: StateObjectStorage<ObjectType>
+    ) -> ObservableObjectCell<ObjectType> {
+        let key: StateKey
+        if let storedKey = storage.key, storedKey.path == path {
+            key = storedKey
+            nextSlot = max(nextSlot, storedKey.slot + 1)
+        }
+        else {
+            key = StateKey(
+                kind: .stateObject,
+                path: path,
+                slot: nextSlot,
+                valueType: ObjectIdentifier(ObjectType.self)
+            )
+            storage.key = key
+            nextSlot += 1
+        }
+
+        return runtime.stateObjectCell(for: key, createObject: storage.createObject)
+    }
+
+    func observedObjectCell<ObjectType: ObservableObject>(
+        for storage: ObservedObjectStorage<ObjectType>
+    ) -> ObservableObjectCell<ObjectType> {
+        let key: StateKey
+        if let storedKey = storage.key, storedKey.path == path {
+            key = storedKey
+            nextSlot = max(nextSlot, storedKey.slot + 1)
+        }
+        else {
+            key = StateKey(
+                kind: .observedObject,
+                path: path,
+                slot: nextSlot,
+                valueType: ObjectIdentifier(ObjectType.self)
+            )
+            storage.key = key
+            nextSlot += 1
+        }
+
+        return runtime.observedObjectCell(for: key, object: storage.object)
     }
 }
 
