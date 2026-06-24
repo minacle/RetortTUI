@@ -25,6 +25,8 @@ enum TerminalControl {
 
     static let quitByte: UInt8 = 3
 
+    private static let escapeSequenceByteTimeout: TimeInterval = 0.1
+
     static let clearScreenSequence = "\u{001B}[2J"
 
     static let hideCursorSequence = "\u{001B}[?25l"
@@ -61,7 +63,7 @@ enum TerminalControl {
         var bytes = [firstByte]
 
         if firstByte == 27 {
-            bytes.append(contentsOf: readPendingBytes(afterDelay: 10_000))
+            bytes.append(contentsOf: readEscapeSequenceBytes())
         }
         else {
             bytes.append(contentsOf: readUTF8ContinuationBytes(after: firstByte))
@@ -152,35 +154,39 @@ enum TerminalControl {
         return Array(FileHandle.standardInput.readData(ofLength: count))
     }
 
-    private static func readPendingBytes(afterDelay delay: useconds_t) -> [UInt8] {
-        usleep(delay)
-
-        let flags = fcntl(STDIN_FILENO, F_GETFL, 0)
-        guard flags >= 0 else {
-            return []
-        }
-
-        _ = fcntl(STDIN_FILENO, F_SETFL, flags | O_NONBLOCK)
-        defer {
-            _ = fcntl(STDIN_FILENO, F_SETFL, flags)
-        }
-
+    private static func readEscapeSequenceBytes() -> [UInt8] {
         var bytes: [UInt8] = []
-        var byte: UInt8 = 0
-
-        while bytes.count < 64, readNonblockingByte(into: &byte) == 1 {
+        while bytes.count < 64,
+              let byte = readByte(timeout: escapeSequenceByteTimeout) {
             bytes.append(byte)
+            if escapeSequenceIsComplete([27] + bytes) {
+                break
+            }
         }
 
         return bytes
     }
 
-    private static func readNonblockingByte(into byte: inout UInt8) -> Int {
-        #if os(Linux)
-        Glibc.read(STDIN_FILENO, &byte, 1)
-        #else
-        Darwin.read(STDIN_FILENO, &byte, 1)
-        #endif
+    static func escapeSequenceIsComplete(_ bytes: [UInt8]) -> Bool {
+        guard bytes.first == 27 else {
+            return false
+        }
+
+        guard bytes.count > 1 else {
+            return true
+        }
+
+        switch bytes[1] {
+        case 91:
+            guard let final = bytes.dropFirst(2).first(where: { 0x40...0x7E ~= $0 }) else {
+                return false
+            }
+            return bytes.last == final
+        case 79:
+            return bytes.count >= 3
+        default:
+            return true
+        }
     }
 
     private static func escapeSequenceInput(for bytes: [UInt8]) -> KeyPress? {
@@ -238,17 +244,22 @@ enum TerminalControl {
     }
 
     private static func mouseButton(for encodedButton: Int) -> MouseButton {
-        if encodedButton & 64 != 0 || encodedButton & 128 != 0 {
-            return .other(encodedButton)
-        }
-
-        switch encodedButton & 0b11 {
+        let button = encodedButton & ~0b1_1100
+        switch button {
         case 0:
             return .left
         case 1:
             return .middle
         case 2:
             return .right
+        case 64:
+            return .wheelUp
+        case 65:
+            return .wheelDown
+        case 66:
+            return .wheelRight
+        case 67:
+            return .wheelLeft
         default:
             return .other(encodedButton)
         }

@@ -188,6 +188,8 @@ final class StateRuntime {
 
     private var forEachIdentityStates: [ForEachIdentityKey: ForEachIdentityState] = [:]
 
+    private var scrollViewStates: [[Int]: ScrollViewState] = [:]
+
     private var invalidated = false
 
     private var focusGeneration = 0
@@ -206,6 +208,7 @@ final class StateRuntime {
 
         let block = ViewResolver.block(from: view, in: proposal, path: [], runtime: self)
         input.updateHitRegions(block?.hitRegions ?? [])
+        input.updateScrollRegions(block?.scrollRegions ?? [])
         return block
     }
 
@@ -295,6 +298,25 @@ final class StateRuntime {
         input.register(handler, at: path)
     }
 
+    func scrollPoint(at path: [Int]) -> ScrollPoint? {
+        scrollViewStates[path]?.point
+    }
+
+    func registerScrollView(
+        at path: [Int],
+        axes: Axis.Set,
+        point: ScrollPoint,
+        maximumPoint: ScrollPoint,
+        binding: Binding<ScrollPosition>?
+    ) {
+        scrollViewStates[path] = ScrollViewState(
+            axes: axes,
+            point: point,
+            maximumPoint: maximumPoint,
+            binding: binding
+        )
+    }
+
     func isFocused(at path: [Int]) -> Bool {
         focus.activePath == path
     }
@@ -359,9 +381,16 @@ final class StateRuntime {
     }
 
     func dispatch(_ mouseEvent: MouseEvent, at date: Date = Date()) -> KeyPress.Result {
-        input.dispatch(mouseEvent, at: date) { path, operation in
-            withView(at: path, perform: operation)
-        }
+        input.dispatch(
+            mouseEvent,
+            at: date,
+            perform: { path, operation in
+                withView(at: path, perform: operation)
+            },
+            scroll: { path, mouseEvent in
+                dispatchScroll(mouseEvent, at: path)
+            }
+        )
     }
 
     var nextTapDeadline: Date? {
@@ -402,6 +431,82 @@ final class StateRuntime {
         forEachIdentityStates = forEachIdentityStates.filter {
             !$0.key.path.starts(with: path)
         }
+        scrollViewStates = scrollViewStates.filter {
+            !$0.key.starts(with: path)
+        }
+    }
+
+    private func dispatchScroll(
+        _ mouseEvent: MouseEvent,
+        at path: [Int]
+    ) -> KeyPress.Result {
+        guard var state = scrollViewStates[path],
+              let delta = scrollDelta(for: mouseEvent, axes: state.axes) else {
+            return .ignored
+        }
+
+        let currentPoint = state.binding?.wrappedValue.point ?? state.point
+        let nextPoint = ScrollPoint(
+            x: clamped(
+                currentPoint.x + delta.x,
+                upperBound: state.maximumPoint.x
+            ),
+            y: clamped(
+                currentPoint.y + delta.y,
+                upperBound: state.maximumPoint.y
+            )
+        )
+        guard nextPoint != currentPoint else {
+            return .ignored
+        }
+
+        state.point = nextPoint
+        scrollViewStates[path] = state
+        state.binding?.wrappedValue = ScrollPosition(point: nextPoint)
+        invalidated = true
+        return .handled
+    }
+
+    private func scrollDelta(
+        for mouseEvent: MouseEvent,
+        axes: Axis.Set
+    ) -> (x: Int, y: Int)? {
+        switch mouseEvent.button {
+        case .wheelUp:
+            if axes.contains(.horizontal)
+                && (mouseEvent.modifiers.contains(.shift) || !axes.contains(.vertical)) {
+                return (x: -1, y: 0)
+            }
+            guard axes.contains(.vertical) else {
+                return nil
+            }
+            return (x: 0, y: -1)
+        case .wheelDown:
+            if axes.contains(.horizontal)
+                && (mouseEvent.modifiers.contains(.shift) || !axes.contains(.vertical)) {
+                return (x: 1, y: 0)
+            }
+            guard axes.contains(.vertical) else {
+                return nil
+            }
+            return (x: 0, y: 1)
+        case .wheelLeft:
+            guard axes.contains(.horizontal) else {
+                return nil
+            }
+            return (x: -1, y: 0)
+        case .wheelRight:
+            guard axes.contains(.horizontal) else {
+                return nil
+            }
+            return (x: 1, y: 0)
+        default:
+            return nil
+        }
+    }
+
+    private func clamped(_ value: Int, upperBound: Int) -> Int {
+        min(max(value, 0), upperBound)
     }
 }
 
@@ -547,6 +652,17 @@ private struct ForEachIdentityState {
     var indicesByID: [AnyHashable: Int] = [:]
 
     var nextIndex = 0
+}
+
+private struct ScrollViewState {
+
+    var axes: Axis.Set
+
+    var point: ScrollPoint
+
+    var maximumPoint: ScrollPoint
+
+    var binding: Binding<ScrollPosition>?
 }
 
 private final class StateRenderContext {

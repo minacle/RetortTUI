@@ -258,7 +258,7 @@ private struct ScrollDemo: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 1) {
-            Text("ScrollView")
+            Text("ScrollView + wheel")
                 .frame(width: 44, alignment: .leading)
             Text("v: \(verticalPosition.description)")
             Text("h: \(horizontalPosition.description)")

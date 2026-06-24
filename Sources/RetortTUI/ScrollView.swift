@@ -237,17 +237,30 @@ extension ScrollView: ScrollRenderable {
             return nil
         }
 
-        let position = ScrollPositionContext.currentPosition
+        let binding = ScrollPositionContext.currentBinding
+        let position = binding?.wrappedValue
+            ?? runtime?.scrollPoint(at: path).map { ScrollPosition(point: $0) }
+            ?? ScrollPosition()
         let result = ScrollViewRenderer.render(
             contentBlock,
             axes: axes,
             position: position,
             proposal: proposal
         )
-        if position.point != nil || position.edge != nil {
+        runtime?.registerScrollView(
+            at: path,
+            axes: axes,
+            point: result.point,
+            maximumPoint: result.maximumPoint,
+            binding: binding
+        )
+        if binding != nil && (position.point != nil || position.edge != nil) {
             ScrollPositionContext.updateCurrentPosition(to: ScrollPosition(point: result.point))
         }
-        return result.block
+
+        var block = result.block
+        block.scrollRegions.append(RenderedScrollRegion(path: path, frame: block.bounds))
+        return block
     }
 
     private func contentProposal(from proposal: RenderProposal?) -> RenderProposal {
@@ -287,7 +300,7 @@ private enum ScrollPositionContext {
         binding.wrappedValue = position
     }
 
-    private static var currentBinding: Binding<ScrollPosition>? {
+    static var currentBinding: Binding<ScrollPosition>? {
         get {
             Thread.current.threadDictionary[threadKey] as? Binding<ScrollPosition>
         }
@@ -310,6 +323,8 @@ enum ScrollViewRenderer {
         var block: RenderedBlock
 
         var point: ScrollPoint
+
+        var maximumPoint: ScrollPoint
     }
 
     static func render(
@@ -321,9 +336,17 @@ enum ScrollViewRenderer {
         let width = proposal?.columns ?? content.width
         let height = proposal?.rows ?? content.height
         guard width > 0, height > 0 else {
-            return Result(block: RenderedBlock(lines: []), point: ScrollPoint())
+            return Result(
+                block: RenderedBlock(lines: []),
+                point: ScrollPoint(),
+                maximumPoint: ScrollPoint()
+            )
         }
 
+        let maximumPoint = ScrollPoint(
+            x: axes.contains(.horizontal) ? maxHorizontalOffset(for: content, width: width) : 0,
+            y: axes.contains(.vertical) ? max(content.height - height, 0) : 0
+        )
         let point = resolvedPoint(
             from: position,
             content: content,
@@ -332,8 +355,8 @@ enum ScrollViewRenderer {
         )
         let x = axes.contains(.horizontal) ? point.x : 0
         let y = axes.contains(.vertical) ? point.y : 0
-        let clampedX = min(x, maxHorizontalOffset(for: content, width: width))
-        let clampedY = min(y, max(content.height - height, 0))
+        let clampedX = min(x, maximumPoint.x)
+        let clampedY = min(y, maximumPoint.y)
         let paddedLines = content.lines.map {
             TerminalText.padded($0, toWidth: content.width)
         }
@@ -357,7 +380,8 @@ enum ScrollViewRenderer {
                     constrainToBounds: proposal?.columns != nil
                 )
             ),
-            point: ScrollPoint(x: clampedX, y: clampedY)
+            point: ScrollPoint(x: clampedX, y: clampedY),
+            maximumPoint: maximumPoint
         )
     }
 

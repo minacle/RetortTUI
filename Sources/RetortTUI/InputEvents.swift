@@ -151,6 +151,14 @@ enum MouseButton: Equatable, Hashable, Sendable {
 
     case right
 
+    case wheelUp
+
+    case wheelDown
+
+    case wheelLeft
+
+    case wheelRight
+
     case other(Int)
 }
 
@@ -400,6 +408,8 @@ final class InputRuntime {
 
     private var hitRegions: [RenderedHitRegion] = []
 
+    private var scrollRegions: [RenderedScrollRegion] = []
+
     private var rootFrame = TextFrame(text: "", row: 1, column: 1)
 
     private var pressedTapTarget: [Int]?
@@ -427,6 +437,10 @@ final class InputRuntime {
 
     func updateHitRegions(_ hitRegions: [RenderedHitRegion]) {
         self.hitRegions = hitRegions
+    }
+
+    func updateScrollRegions(_ scrollRegions: [RenderedScrollRegion]) {
+        self.scrollRegions = scrollRegions
     }
 
     func updateRootFrame(_ frame: TextFrame) {
@@ -471,9 +485,15 @@ final class InputRuntime {
     func dispatch(
         _ mouseEvent: MouseEvent,
         at date: Date,
-        perform: ([Int], () -> Void) -> Void
+        perform: ([Int], () -> Void) -> Void,
+        scroll: ([Int], MouseEvent) -> KeyPress.Result
     ) -> KeyPress.Result {
         _ = dispatchExpiredTapActions(at: date, perform: perform)
+
+        if mouseEvent.button.isScrollWheel {
+            pressedTapTarget = nil
+            return dispatchScroll(mouseEvent, scroll: scroll)
+        }
 
         guard mouseEvent.button == .left else {
             pressedTapTarget = nil
@@ -541,6 +561,40 @@ final class InputRuntime {
             .path
     }
 
+    private func dispatchScroll(
+        _ mouseEvent: MouseEvent,
+        scroll: ([Int], MouseEvent) -> KeyPress.Result
+    ) -> KeyPress.Result {
+        guard mouseEvent.phase == .down else {
+            return .ignored
+        }
+
+        for path in scrollTargets(at: mouseEvent) {
+            if scroll(path, mouseEvent) == .handled {
+                return .handled
+            }
+        }
+
+        return .ignored
+    }
+
+    private func scrollTargets(at mouseEvent: MouseEvent) -> [[Int]] {
+        let column = mouseEvent.column - rootFrame.column
+        let row = mouseEvent.row - rootFrame.row
+        return scrollRegions
+            .filter {
+                $0.frame.contains(column: column, row: row)
+            }
+            .sorted {
+                if $0.path.count != $1.path.count {
+                    return $0.path.count > $1.path.count
+                }
+
+                return $0.frame.area < $1.frame.area
+            }
+            .map(\.path)
+    }
+
     private func dispatchTap(
         at path: [Int],
         date: Date,
@@ -599,6 +653,18 @@ final class InputRuntime {
 
     private func resetTapSequence() {
         tapSequence = nil
+    }
+}
+
+private extension MouseButton {
+
+    var isScrollWheel: Bool {
+        switch self {
+        case .wheelUp, .wheelDown, .wheelLeft, .wheelRight:
+            return true
+        default:
+            return false
+        }
     }
 }
 

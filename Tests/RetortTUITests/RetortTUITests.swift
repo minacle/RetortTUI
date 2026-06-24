@@ -822,6 +822,153 @@ import Testing
     #expect(block?.lines == ["HIJ", "MNO"])
 }
 
+@Test func scrollViewScrollsWithMouseWheelWithoutFocus() {
+    let runtime = StateRuntime()
+    let view = FocusedScrollWheelView()
+
+    #expect(runtime.block(from: view)?.lines == ["focus", "A    ", "B    "])
+    _ = runtime.consumeInvalidation()
+
+    dispatchWheel(to: runtime, button: .wheelDown, column: 1, row: 2)
+    #expect(runtime.consumeInvalidation())
+    #expect(runtime.block(from: view)?.lines == ["focus", "B    ", "C    "])
+}
+
+@Test func scrollViewWheelUpdatesScrollPositionBinding() {
+    var position = ScrollPosition()
+    let scrollView = ScrollView {
+        VStack {
+            Text("A")
+            Text("B")
+            Text("C")
+        }
+    }
+    .scrollPosition(
+        Binding(
+            get: { position },
+            set: { position = $0 }
+        )
+    )
+    .frame(width: 1, height: 2)
+    let runtime = StateRuntime()
+
+    #expect(runtime.block(from: scrollView)?.lines == ["A", "B"])
+    dispatchWheel(to: runtime, button: .wheelDown, column: 1, row: 1)
+
+    #expect(position.point == ScrollPoint(y: 1))
+    #expect(runtime.consumeInvalidation())
+    #expect(runtime.block(from: scrollView)?.lines == ["B", "C"])
+}
+
+@Test func scrollViewWheelStoresPositionWithoutBinding() {
+    let scrollView = ScrollView {
+        VStack {
+            Text("A")
+            Text("B")
+            Text("C")
+        }
+    }
+    .frame(width: 1, height: 2)
+    let runtime = StateRuntime()
+
+    #expect(runtime.block(from: scrollView)?.lines == ["A", "B"])
+    dispatchWheel(to: runtime, button: .wheelDown, column: 1, row: 1)
+
+    #expect(runtime.consumeInvalidation())
+    #expect(runtime.block(from: scrollView)?.lines == ["B", "C"])
+}
+
+@Test func scrollViewWheelSupportsHorizontalAxes() {
+    let scrollView = ScrollView(.horizontal) {
+        Text("ABCDE")
+    }
+    .frame(width: 3, height: 1)
+    let runtime = StateRuntime()
+
+    #expect(runtime.block(from: scrollView)?.lines == ["ABC"])
+    dispatchWheel(to: runtime, button: .wheelDown, column: 1, row: 1)
+
+    #expect(runtime.consumeInvalidation())
+    #expect(runtime.block(from: scrollView)?.lines == ["BCD"])
+}
+
+@Test func scrollViewWheelSupportsNativeHorizontalAndShiftFallback() {
+    let scrollView = ScrollView(.all) {
+        VStack {
+            Text("ABCDE")
+            Text("FGHIJ")
+        }
+    }
+    .frame(width: 3, height: 1)
+    let runtime = StateRuntime()
+
+    #expect(runtime.block(from: scrollView)?.lines == ["ABC"])
+    dispatchWheel(to: runtime, button: .wheelRight, column: 1, row: 1)
+
+    #expect(runtime.consumeInvalidation())
+    #expect(runtime.block(from: scrollView)?.lines == ["BCD"])
+
+    dispatchWheel(to: runtime, button: .wheelLeft, column: 1, row: 1)
+    #expect(runtime.consumeInvalidation())
+    #expect(runtime.block(from: scrollView)?.lines == ["ABC"])
+
+    dispatchWheel(
+        to: runtime,
+        button: .wheelDown,
+        column: 1,
+        row: 1,
+        modifiers: .shift
+    )
+    #expect(runtime.consumeInvalidation())
+    #expect(runtime.block(from: scrollView)?.lines == ["BCD"])
+}
+
+@Test func scrollViewWheelBubblesWhenInnerRegionCannotScroll() {
+    let scrollView = ScrollView {
+        VStack {
+            ScrollView {
+                VStack {
+                    Text("A")
+                    Text("B")
+                }
+            }
+            .frame(width: 1, height: 2)
+            Text("C")
+            Text("D")
+        }
+    }
+    .frame(width: 1, height: 2)
+    let runtime = StateRuntime()
+
+    #expect(runtime.block(from: scrollView)?.lines == ["A", "B"])
+    dispatchWheel(to: runtime, button: .wheelDown, column: 1, row: 1)
+
+    #expect(runtime.consumeInvalidation())
+    #expect(runtime.block(from: scrollView)?.lines == ["B", "C"])
+}
+
+@Test func scrollViewWheelIgnoresEventsOutsideRenderedRegion() {
+    let scrollView = ScrollView {
+        VStack {
+            Text("A")
+            Text("B")
+            Text("C")
+        }
+    }
+    .frame(width: 1, height: 2)
+    let runtime = StateRuntime()
+
+    #expect(runtime.block(from: scrollView)?.lines == ["A", "B"])
+    dispatchWheel(
+        to: runtime,
+        button: .wheelDown,
+        column: 2,
+        row: 1,
+        expecting: .ignored
+    )
+    #expect(!runtime.consumeInvalidation())
+}
+
 @Test func frameClipsAndPadsToFixedSize() {
     let view = Text("AB").frame(width: 4, height: 2)
 
@@ -1238,6 +1385,14 @@ import Testing
     #expect(TerminalControl.input(for: [27, 91, 90]) == .none)
 }
 
+@Test func terminalRecognizesCompleteEscapeSequences() {
+    #expect(TerminalControl.escapeSequenceIsComplete([27]))
+    #expect(!TerminalControl.escapeSequenceIsComplete(Array("\u{001B}[<64;88;17".utf8)))
+    #expect(TerminalControl.escapeSequenceIsComplete(Array("\u{001B}[<64;88;17M".utf8)))
+    #expect(TerminalControl.escapeSequenceIsComplete([27, 91, 65]))
+    #expect(TerminalControl.escapeSequenceIsComplete([27, 91, 51, 126]))
+}
+
 @Test func terminalParsesSGRMouseInput() {
     #expect(
         TerminalControl.input(for: Array("\u{001B}[<0;12;3M".utf8))
@@ -1262,6 +1417,34 @@ import Testing
     #expect(
         TerminalControl.input(for: Array("\u{001B}[<2;4;5M".utf8))
             == .mouse(MouseEvent(button: .right, column: 4, row: 5, phase: .down))
+    )
+    #expect(
+        TerminalControl.input(for: Array("\u{001B}[<64;6;7M".utf8))
+            == .mouse(MouseEvent(button: .wheelUp, column: 6, row: 7, phase: .down))
+    )
+    #expect(
+        TerminalControl.input(for: Array("\u{001B}[<65;6;7M".utf8))
+            == .mouse(MouseEvent(button: .wheelDown, column: 6, row: 7, phase: .down))
+    )
+    #expect(
+        TerminalControl.input(for: Array("\u{001B}[<66;6;7M".utf8))
+            == .mouse(MouseEvent(button: .wheelRight, column: 6, row: 7, phase: .down))
+    )
+    #expect(
+        TerminalControl.input(for: Array("\u{001B}[<67;6;7M".utf8))
+            == .mouse(MouseEvent(button: .wheelLeft, column: 6, row: 7, phase: .down))
+    )
+    #expect(
+        TerminalControl.input(for: Array("\u{001B}[<68;6;7M".utf8))
+            == .mouse(
+                MouseEvent(
+                    button: .wheelUp,
+                    column: 6,
+                    row: 7,
+                    modifiers: .shift,
+                    phase: .down
+                )
+            )
     )
     #expect(TerminalControl.input(for: Array("\u{001B}[<0;12M".utf8)) == .none)
 }
@@ -1932,6 +2115,27 @@ private func dispatchClick(
     )
 }
 
+private func dispatchWheel(
+    to runtime: StateRuntime,
+    button: MouseButton,
+    column: Int,
+    row: Int,
+    modifiers: EventModifiers = [],
+    expecting result: KeyPress.Result = .handled
+) {
+    #expect(
+        runtime.dispatch(
+            MouseEvent(
+                button: button,
+                column: column,
+                row: row,
+                modifiers: modifiers,
+                phase: .down
+            )
+        ) == result
+    )
+}
+
 private enum FocusField: Hashable {
 
     case first
@@ -2036,6 +2240,27 @@ private struct BoolFocusableThenFocusedView: View {
 
     var body: some View {
         CapturedBoolFocusableThenFocusedText(binding: $isFocused, probe: probe)
+    }
+}
+
+private struct FocusedScrollWheelView: View {
+
+    @FocusState var isFocused = true
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Text("focus")
+                .focusable()
+                .focused($isFocused)
+            ScrollView {
+                VStack {
+                    Text("A")
+                    Text("B")
+                    Text("C")
+                }
+            }
+            .frame(width: 1, height: 2)
+        }
     }
 }
 
