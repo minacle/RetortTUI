@@ -304,6 +304,96 @@ enum RenderedElement: Equatable, Sendable {
     case spacer(minLength: Int)
 }
 
+protocol FlattenableViewContent {
+
+    func renderedElements(
+        in proposal: RenderProposal?,
+        path: [Int],
+        runtime: StateRuntime?
+    ) -> [RenderedElement]
+}
+
+extension FlattenableViewContent {
+
+    func renderedBlock(
+        in proposal: RenderProposal?,
+        path: [Int],
+        runtime: StateRuntime?
+    ) -> RenderedBlock? {
+        StackRenderer.vertical(
+            renderedElements(in: proposal, path: path, runtime: runtime),
+            alignment: .leading,
+            spacing: 0,
+            proposal: proposal
+        )
+    }
+}
+
+extension Group: FlattenableViewContent {
+
+    func renderedElements(
+        in proposal: RenderProposal?,
+        path: [Int],
+        runtime: StateRuntime?
+    ) -> [RenderedElement] {
+        ViewResolver.elements(
+            from: content,
+            in: proposal,
+            path: path + [0],
+            runtime: runtime
+        )
+    }
+}
+
+extension ForEach: FlattenableViewContent {
+
+    func renderedElements(
+        in proposal: RenderProposal?,
+        path: [Int],
+        runtime: StateRuntime?
+    ) -> [RenderedElement] {
+        var seenIDs: Set<AnyHashable> = []
+        var activeIDs: [AnyHashable] = []
+        let renderedElements = data.enumerated().flatMap { offset, element in
+            let elementID = AnyHashable(element[keyPath: id])
+            precondition(
+                seenIDs.insert(elementID).inserted,
+                "ForEach data IDs must be unique."
+            )
+
+            activeIDs.append(elementID)
+            let childIndex = runtime?.forEachChildIndex(
+                at: path,
+                id: elementID
+            ) ?? offset
+            let childPath = path + [childIndex]
+            let child = contentElement(element, runtime: runtime)
+            return ViewResolver.elements(
+                from: child,
+                in: proposal,
+                path: childPath,
+                runtime: runtime
+            )
+        }
+
+        runtime?.finishForEachRender(at: path, activeIDs: activeIDs)
+        return renderedElements
+    }
+
+    private func contentElement(
+        _ element: Data.Element,
+        runtime: StateRuntime?
+    ) -> Content {
+        guard let runtime, let contextPath else {
+            return content(element)
+        }
+
+        return runtime.withView(at: contextPath) {
+            content(element)
+        }
+    }
+}
+
 enum ViewResolver {
 
     static func text<Content: View>(from view: Content) -> String? {
@@ -353,8 +443,8 @@ enum ViewResolver {
 
         if let group = view as? ViewGroup {
             return StackRenderer.vertical(
-                group.elements.enumerated().compactMap { index, element in
-                    element.renderedElement(
+                group.elements.enumerated().flatMap { index, element in
+                    element.renderedElements(
                         in: proposal,
                         path: path + [index],
                         runtime: runtime
@@ -364,6 +454,10 @@ enum ViewResolver {
                 spacing: 0,
                 proposal: proposal
             )
+        }
+
+        if let content = view as? any FlattenableViewContent {
+            return content.renderedBlock(in: proposal, path: path, runtime: runtime)
         }
 
         if let stack = view as? any StackRenderable {
@@ -452,6 +546,10 @@ enum ViewResolver {
                 path: path,
                 runtime: runtime
             ).map { .block($0) }
+        }
+
+        if let content = view as? any FlattenableViewContent {
+            return content.renderedBlock(in: proposal, path: path, runtime: runtime).map { .block($0) }
         }
 
         if let stack = view as? any StackRenderable {
@@ -646,7 +744,9 @@ extension ViewResolver {
 
     static func blocks<Content: View>(from view: Content) -> [RenderedBlock] {
         if let group = view as? ViewGroup {
-            return group.elements.compactMap { $0.renderedBlock() }
+            return group.elements.flatMap {
+                $0.renderedElements(in: nil, path: [], runtime: nil).compactMap(\.block)
+            }
         }
 
         return block(from: view).map { [$0] } ?? []
@@ -666,13 +766,17 @@ extension ViewResolver {
         runtime: StateRuntime?
     ) -> [RenderedElement] {
         if let group = view as? ViewGroup {
-            return group.elements.enumerated().compactMap { index, element in
-                element.renderedElement(
+            return group.elements.enumerated().flatMap { index, element in
+                element.renderedElements(
                     in: proposal,
                     path: path + [index],
                     runtime: runtime
                 )
             }
+        }
+
+        if let content = view as? any FlattenableViewContent {
+            return content.renderedElements(in: proposal, path: path, runtime: runtime)
         }
 
         return element(
@@ -681,6 +785,17 @@ extension ViewResolver {
             path: path,
             runtime: runtime
         ).map { [$0] } ?? []
+    }
+}
+
+private extension RenderedElement {
+
+    var block: RenderedBlock? {
+        guard case .block(let block) = self else {
+            return nil
+        }
+
+        return block
     }
 }
 

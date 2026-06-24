@@ -186,6 +186,8 @@ final class StateRuntime {
 
     private var textFieldCursors: [[Int]: TextFieldCursor] = [:]
 
+    private var forEachIdentityStates: [ForEachIdentityKey: ForEachIdentityState] = [:]
+
     private var invalidated = false
 
     private var focusGeneration = 0
@@ -311,6 +313,41 @@ final class StateRuntime {
         return cursor
     }
 
+    func forEachChildIndex(at path: [Int], id: AnyHashable) -> Int {
+        let key = ForEachIdentityKey(path: path)
+        var state = forEachIdentityStates[key] ?? ForEachIdentityState()
+
+        if let index = state.indicesByID[id] {
+            return index
+        }
+
+        let index = state.nextIndex
+        state.indicesByID[id] = index
+        state.nextIndex += 1
+        forEachIdentityStates[key] = state
+        return index
+    }
+
+    func finishForEachRender(at path: [Int], activeIDs: [AnyHashable]) {
+        let key = ForEachIdentityKey(path: path)
+        guard var state = forEachIdentityStates[key] else {
+            return
+        }
+
+        let activeIDs = Set(activeIDs)
+        let removedPaths = state.indicesByID.compactMap { id, index -> [Int]? in
+            activeIDs.contains(id) ? nil : path + [index]
+        }
+        state.indicesByID = state.indicesByID.filter {
+            activeIDs.contains($0.key)
+        }
+        forEachIdentityStates[key] = state
+
+        for removedPath in removedPaths {
+            removeStateSubtree(at: removedPath)
+        }
+    }
+
     func dispatch(_ keyPress: KeyPress) -> KeyPress.Result {
         guard let activePath = focus.activePath else {
             return .ignored
@@ -353,6 +390,18 @@ final class StateRuntime {
         }
 
         return operation()
+    }
+
+    private func removeStateSubtree(at path: [Int]) {
+        cells = cells.filter {
+            !$0.key.path.starts(with: path)
+        }
+        textFieldCursors = textFieldCursors.filter {
+            !$0.key.starts(with: path)
+        }
+        forEachIdentityStates = forEachIdentityStates.filter {
+            !$0.key.path.starts(with: path)
+        }
     }
 }
 
@@ -486,6 +535,18 @@ private struct StateKey: Hashable {
     var slot: Int
 
     var valueType: ObjectIdentifier
+}
+
+private struct ForEachIdentityKey: Hashable {
+
+    var path: [Int]
+}
+
+private struct ForEachIdentityState {
+
+    var indicesByID: [AnyHashable: Int] = [:]
+
+    var nextIndex = 0
 }
 
 private final class StateRenderContext {

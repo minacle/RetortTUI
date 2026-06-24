@@ -339,17 +339,23 @@ private struct ScrollDemo: View {
 
 private struct ForEachRows: View {
 
+    private let rows = [
+        "ScrollPosition()",
+        "init(y:)",
+        "init(x:y:)",
+        "init(edge:)",
+        "to(point:)",
+        "to(x:)",
+        "to(y:)",
+        "to(x:y:)",
+        "to(edge:)",
+        "Axis.Set",
+    ]
+
     var body: some View {
-        Text("row 00: ScrollPosition()")
-        Text("row 01: init(y:)")
-        Text("row 02: init(x:y:)")
-        Text("row 03: init(edge:)")
-        Text("row 04: to(point:)")
-        Text("row 05: to(x:)")
-        Text("row 06: to(y:)")
-        Text("row 07: to(x:y:)")
-        Text("row 08: to(edge:)")
-        Text("row 09: Axis.Set")
+        ForEach(rows.indices) { index in
+            Text("row \(String(format: "%02d", index)): \(rows[index])")
+        }
     }
 }
 

@@ -61,6 +61,65 @@ public struct EmptyView: View {
     public init() {}
 }
 
+/// A view that collects multiple child views without adding layout of its own.
+public struct Group<Content: View>: View {
+
+    public typealias Body = Never
+
+    let content: Content
+
+    public init(@ViewBuilder content: () -> Content) {
+        self.content = content()
+    }
+}
+
+/// A view that creates child views from identified collection data.
+public struct ForEach<Data, ID, Content>: View
+    where Data: RandomAccessCollection, ID: Hashable, Content: View
+{
+
+    public typealias Body = Never
+
+    public let data: Data
+
+    public let id: KeyPath<Data.Element, ID>
+
+    public let content: (Data.Element) -> Content
+
+    let contextPath: [Int]?
+
+    public init(
+        _ data: Data,
+        id: KeyPath<Data.Element, ID>,
+        @ViewBuilder content: @escaping (Data.Element) -> Content
+    ) {
+        self.data = data
+        self.id = id
+        self.content = content
+        self.contextPath = StateContext.currentPath
+    }
+}
+
+public extension ForEach where Data.Element: Identifiable, ID == Data.Element.ID {
+
+    init(
+        _ data: Data,
+        @ViewBuilder content: @escaping (Data.Element) -> Content
+    ) {
+        self.init(data, id: \.id, content: content)
+    }
+}
+
+public extension ForEach where Data == Range<Int>, ID == Int {
+
+    init(
+        _ data: Range<Int>,
+        @ViewBuilder content: @escaping (Int) -> Content
+    ) {
+        self.init(data, id: \.self, content: content)
+    }
+}
+
 struct ViewGroup: View {
 
     typealias Body = Never
@@ -76,9 +135,19 @@ struct AnyViewStorage {
 
     private let element: (RenderProposal?, [Int], StateRuntime?) -> RenderedElement?
 
+    private let elements: (RenderProposal?, [Int], StateRuntime?) -> [RenderedElement]
+
     init<Content: View>(_ content: Content) {
         self.element = { proposal, path, runtime in
             ViewResolver.element(
+                from: content,
+                in: proposal,
+                path: path,
+                runtime: runtime
+            )
+        }
+        self.elements = { proposal, path, runtime in
+            ViewResolver.elements(
                 from: content,
                 in: proposal,
                 path: path,
@@ -97,6 +166,14 @@ struct AnyViewStorage {
         runtime: StateRuntime?
     ) -> RenderedElement? {
         element(proposal, path, runtime)
+    }
+
+    func renderedElements(
+        in proposal: RenderProposal?,
+        path: [Int],
+        runtime: StateRuntime?
+    ) -> [RenderedElement] {
+        elements(proposal, path, runtime)
     }
 
     func renderedBlock() -> RenderedBlock? {
