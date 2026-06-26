@@ -769,6 +769,10 @@ enum ViewResolver {
             return modifier.renderedBlock(in: proposal, path: path, runtime: runtime)
         }
 
+        if let modifier = view as? any LifecycleModifierRenderable {
+            return modifier.renderedBlock(in: proposal, path: path, runtime: runtime)
+        }
+
         if let modifier = view as? any TerminationModifierRenderable {
             return modifier.renderedBlock(in: proposal, path: path, runtime: runtime)
         }
@@ -878,6 +882,14 @@ enum ViewResolver {
         }
 
         if let modifier = view as? any EnvironmentModifierRenderable {
+            return modifier.renderedElement(
+                in: proposal,
+                path: path,
+                runtime: runtime
+            )
+        }
+
+        if let modifier = view as? any LifecycleModifierRenderable {
             return modifier.renderedElement(
                 in: proposal,
                 path: path,

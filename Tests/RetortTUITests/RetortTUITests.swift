@@ -1883,6 +1883,160 @@ import Testing
     #expect(runtime.block(from: view)?.text == "updated")
 }
 
+@Test func onAppearRunsOnceForStableIdentity() {
+    let runtime = StateRuntime()
+    let probe = LifecycleProbe()
+    let view = Text("A")
+        .onAppear {
+            probe.events.append("appear")
+        }
+
+    #expect(runtime.block(from: view)?.text == "A")
+    #expect(probe.events == ["appear"])
+
+    #expect(runtime.block(from: view)?.text == "A")
+    #expect(probe.events == ["appear"])
+}
+
+@Test func onAppearNilActionHasNoEffect() {
+    let runtime = StateRuntime()
+
+    #expect(runtime.block(from: Text("A").onAppear())?.text == "A")
+}
+
+@Test func onDisappearRunsWhenRenderedIdentityIsRemoved() {
+    let runtime = StateRuntime()
+    let probe = LifecycleProbe()
+
+    #expect(
+        runtime.block(
+            from: ConditionalLifecycleView(isVisible: true, probe: probe)
+        )?.lines == ["A", "B"]
+    )
+    #expect(probe.events == ["appear"])
+
+    #expect(
+        runtime.block(
+            from: ConditionalLifecycleView(isVisible: true, probe: probe)
+        )?.lines == ["A", "B"]
+    )
+    #expect(probe.events == ["appear"])
+
+    #expect(
+        runtime.block(
+            from: ConditionalLifecycleView(isVisible: false, probe: probe)
+        )?.lines == ["B"]
+    )
+    #expect(probe.events == ["appear", "disappear"])
+
+    #expect(
+        runtime.block(
+            from: ConditionalLifecycleView(isVisible: true, probe: probe)
+        )?.lines == ["A", "B"]
+    )
+    #expect(probe.events == ["appear", "disappear", "appear"])
+}
+
+@Test func lifecycleActionsMutateStateWithRestoredViewContext() {
+    let appearRuntime = StateRuntime()
+
+    #expect(appearRuntime.block(from: LifecycleAppearStateView())?.text == "initial")
+    #expect(appearRuntime.consumeInvalidation())
+    #expect(appearRuntime.block(from: LifecycleAppearStateView())?.text == "appeared")
+
+    let disappearRuntime = StateRuntime()
+    #expect(
+        disappearRuntime.block(
+            from: LifecycleDisappearStateView(isVisible: true)
+        )?.lines == ["visible", "child  "]
+    )
+    #expect(
+        disappearRuntime.block(
+            from: LifecycleDisappearStateView(isVisible: false)
+        )?.lines == ["visible"]
+    )
+    #expect(disappearRuntime.consumeInvalidation())
+    #expect(
+        disappearRuntime.block(
+            from: LifecycleDisappearStateView(isVisible: false)
+        )?.lines == ["gone"]
+    )
+}
+
+@Test func lifecycleActionsRestoreEnvironment() {
+    let runtime = StateRuntime()
+    let probe = LifecycleProbe()
+    let view = EnvironmentLifecycleView(probe: probe)
+        .environment(\.testMarker, "parent")
+
+    #expect(runtime.block(from: view)?.text == "marker")
+    #expect(probe.events == ["parent"])
+}
+
+@Test func forEachReorderDoesNotTriggerLifecycleActions() {
+    let runtime = StateRuntime()
+    let probe = LifecycleProbe()
+    let first = [
+        LifecycleItem(id: "a", label: "A"),
+        LifecycleItem(id: "b", label: "B"),
+    ]
+    let reordered = [
+        LifecycleItem(id: "b", label: "B"),
+        LifecycleItem(id: "a", label: "A"),
+    ]
+
+    #expect(runtime.block(from: ForEachLifecycleView(items: first, probe: probe))?.lines == ["A", "B"])
+    #expect(probe.events == ["appear a", "appear b"])
+
+    #expect(runtime.block(from: ForEachLifecycleView(items: reordered, probe: probe))?.lines == ["B", "A"])
+    #expect(probe.events == ["appear a", "appear b"])
+}
+
+@Test func forEachRemovalRunsDisappearBeforeStateCleanup() {
+    let runtime = StateRuntime()
+    let probe = LifecycleProbe()
+    let item = LifecycleItem(id: "a", label: "A")
+
+    #expect(
+        runtime.block(
+            from: StatefulForEachLifecycleView(items: [item], probe: probe)
+        )?.text == "A:fresh"
+    )
+    #expect(runtime.consumeInvalidation())
+    #expect(
+        runtime.block(
+            from: StatefulForEachLifecycleView(items: [item], probe: probe)
+        )?.text == "A:active"
+    )
+
+    #expect(runtime.block(from: StatefulForEachLifecycleView(items: [], probe: probe)) == nil)
+    #expect(probe.events == ["disappear A:active"])
+
+    #expect(
+        runtime.block(
+            from: StatefulForEachLifecycleView(items: [item], probe: probe)
+        )?.text == "A:fresh"
+    )
+}
+
+@Test func stackedLifecycleModifiersRunInDeterministicOrder() {
+    let runtime = StateRuntime()
+    let probe = LifecycleProbe()
+
+    _ = runtime.block(from: StackedLifecycleView(isVisible: true, probe: probe))
+    #expect(probe.events == ["outer appear", "inner appear"])
+
+    _ = runtime.block(from: StackedLifecycleView(isVisible: false, probe: probe))
+    #expect(
+        probe.events == [
+            "outer appear",
+            "inner appear",
+            "outer disappear",
+            "inner disappear",
+        ]
+    )
+}
+
 @Test func terminalParsesPrintableAndUTF8Input() {
     #expect(TerminalControl.input(for: [65]) == .keyPress(KeyPress(key: "A", characters: "A")))
     #expect(
@@ -3054,6 +3208,11 @@ private final class TapGestureProbe {
     }
 }
 
+private final class LifecycleProbe {
+
+    var events: [String] = []
+}
+
 private final class TerminateActionProbe {
 
     var action: TerminateAction?
@@ -3108,6 +3267,158 @@ private struct EnvironmentStateMarkerView: View {
             probe: probe
         )
         .environment(\.testMarker, marker)
+    }
+}
+
+private struct ConditionalLifecycleView: View {
+
+    let isVisible: Bool
+
+    let probe: LifecycleProbe
+
+    var body: some View {
+        VStack(alignment: .leading) {
+            if isVisible {
+                Text("A")
+                    .onAppear {
+                        probe.events.append("appear")
+                    }
+                    .onDisappear {
+                        probe.events.append("disappear")
+                    }
+            }
+            Text("B")
+        }
+    }
+}
+
+private struct LifecycleAppearStateView: View {
+
+    @State private var status = "initial"
+
+    var body: some View {
+        Text(status)
+            .onAppear {
+                status = "appeared"
+            }
+    }
+}
+
+private struct LifecycleDisappearStateView: View {
+
+    let isVisible: Bool
+
+    @State private var status = "visible"
+
+    var body: some View {
+        VStack(alignment: .leading) {
+            Text(status)
+            if isVisible {
+                Text("child")
+                    .onDisappear {
+                        status = "gone"
+                    }
+            }
+        }
+    }
+}
+
+private struct EnvironmentLifecycleView: View {
+
+    let probe: LifecycleProbe
+
+    @Environment(\.testMarker) private var marker
+
+    var body: some View {
+        Text("marker")
+            .onAppear {
+                probe.events.append(marker)
+            }
+    }
+}
+
+private struct LifecycleItem: Identifiable, Equatable {
+
+    let id: String
+
+    var label: String
+}
+
+private struct ForEachLifecycleView: View {
+
+    let items: [LifecycleItem]
+
+    let probe: LifecycleProbe
+
+    var body: some View {
+        ForEach(items) { item in
+            Text(item.label)
+                .onAppear {
+                    probe.events.append("appear \(item.id)")
+                }
+                .onDisappear {
+                    probe.events.append("disappear \(item.id)")
+                }
+        }
+    }
+}
+
+private struct StatefulForEachLifecycleView: View {
+
+    let items: [LifecycleItem]
+
+    let probe: LifecycleProbe
+
+    var body: some View {
+        ForEach(items) { item in
+            StatefulLifecycleRow(item: item, probe: probe)
+        }
+    }
+}
+
+private struct StatefulLifecycleRow: View {
+
+    let item: LifecycleItem
+
+    let probe: LifecycleProbe
+
+    @State private var status = "fresh"
+
+    var body: some View {
+        Text("\(item.label):\(status)")
+            .onAppear {
+                status = "active"
+            }
+            .onDisappear {
+                probe.events.append("disappear \(item.label):\(status)")
+            }
+    }
+}
+
+private struct StackedLifecycleView: View {
+
+    let isVisible: Bool
+
+    let probe: LifecycleProbe
+
+    var body: some View {
+        VStack(alignment: .leading) {
+            if isVisible {
+                Text("A")
+                    .onAppear {
+                        probe.events.append("inner appear")
+                    }
+                    .onDisappear {
+                        probe.events.append("inner disappear")
+                    }
+                    .onAppear {
+                        probe.events.append("outer appear")
+                    }
+                    .onDisappear {
+                        probe.events.append("outer disappear")
+                    }
+            }
+        }
     }
 }
 

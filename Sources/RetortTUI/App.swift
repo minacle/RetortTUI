@@ -71,7 +71,7 @@ struct AppRunner<Application: App> {
         using runtime: StateRuntime,
         termination: TerminationController
     ) {
-        repeat {
+        while true {
             let viewport = TerminalControl.currentTerminalSize()
             guard let block = root.renderedBlock(
                 in: RenderProposal(viewport),
@@ -82,8 +82,13 @@ struct AppRunner<Application: App> {
             }
 
             runtime.updateRenderedFrame(TextRenderer.frame(for: block, in: viewport))
+            guard !runtime.consumeInvalidation() else {
+                continue
+            }
+
             render(block, in: viewport)
-        } while runtime.consumeInvalidation()
+            return
+        }
     }
 
     private func render(_ block: RenderedBlock, in viewport: TerminalViewportSize) {

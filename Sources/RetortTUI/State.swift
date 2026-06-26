@@ -281,6 +281,8 @@ final class StateRuntime {
 
     private let input = InputRuntime()
 
+    private let lifecycle = LifecycleRuntime()
+
     private var textFieldCursors: [[Int]: TextFieldCursor] = [:]
 
     private var forEachIdentityStates: [ForEachIdentityKey: ForEachIdentityState] = [:]
@@ -295,6 +297,8 @@ final class StateRuntime {
 
     private var suppressRenderRegistrations = false
 
+    private var pendingRemovedStateSubtrees: [[Int]] = []
+
     var isSuppressingRenderRegistrations: Bool {
         suppressRenderRegistrations
     }
@@ -305,11 +309,14 @@ final class StateRuntime {
     ) -> RenderedBlock? {
         focus.beginRender()
         input.beginRender()
+        lifecycle.beginRender()
         terminationHandler = nil
         defer {
             if focus.finishRender() {
                 invalidated = true
             }
+            lifecycle.finishRender(perform: performLifecycleHandler)
+            removePendingStateSubtrees()
         }
 
         let block = ViewResolver.block(
@@ -330,11 +337,14 @@ final class StateRuntime {
     ) -> RenderedElement? {
         focus.beginRender()
         input.beginRender()
+        lifecycle.beginRender()
         terminationHandler = nil
         defer {
             if focus.finishRender() {
                 invalidated = true
             }
+            lifecycle.finishRender(perform: performLifecycleHandler)
+            removePendingStateSubtrees()
         }
 
         return ViewResolver.element(from: view, in: proposal, path: [], runtime: self)
@@ -484,6 +494,14 @@ final class StateRuntime {
         terminationHandler = handler
     }
 
+    func registerLifecycleHandler(_ handler: LifecycleHandler, at path: [Int]) {
+        guard !suppressRenderRegistrations else {
+            return
+        }
+
+        lifecycle.register(handler, at: path)
+    }
+
     func scrollPoint(at path: [Int]) -> ScrollPoint? {
         scrollViewStates[path]?.point
     }
@@ -555,9 +573,7 @@ final class StateRuntime {
         }
         forEachIdentityStates[key] = state
 
-        for removedPath in removedPaths {
-            removeStateSubtree(at: removedPath)
-        }
+        pendingRemovedStateSubtrees.append(contentsOf: removedPaths)
     }
 
     func dispatch(_ keyPress: KeyPress) -> KeyPress.Result {
@@ -622,6 +638,14 @@ final class StateRuntime {
         withView(at: path, perform: operation)
     }
 
+    private func performLifecycleHandler(_ handler: LifecycleHandler) {
+        EnvironmentRenderContext.withValues(handler.environment) {
+            withView(at: handler.actionPath) {
+                handler.action()
+            }
+        }
+    }
+
     private func environmentRestoringKeyPressHandler(
         _ handler: KeyPressHandler
     ) -> KeyPressHandler {
@@ -674,6 +698,14 @@ final class StateRuntime {
         scrollViewStates = scrollViewStates.filter {
             !$0.key.starts(with: path)
         }
+    }
+
+    private func removePendingStateSubtrees() {
+        for path in pendingRemovedStateSubtrees {
+            removeStateSubtree(at: path)
+        }
+
+        pendingRemovedStateSubtrees = []
     }
 
     private func dispatchScroll(

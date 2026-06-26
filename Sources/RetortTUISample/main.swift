@@ -472,12 +472,22 @@ private struct LayoutAndBindingDemo: View {
 
     @ObservedObject var observableCounter: SampleObservableCounter
 
+    @State private var lifecycleStatus = "pending"
+
     var body: some View {
         VStack(alignment: .leading, spacing: 1) {
             Text("Layout, geometry, and state")
                 .frame(width: 78, alignment: .leading)
 
             EnvironmentMarkerDemo()
+
+            Text("lifecycle: \(lifecycleStatus)")
+                .onAppear {
+                    lifecycleStatus = "appeared"
+                }
+                .onDisappear {
+                    lifecycleStatus = "disappeared"
+                }
 
             HStack(alignment: .top, spacing: 2) {
                 RowLabel("stacks")
