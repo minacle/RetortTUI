@@ -208,9 +208,19 @@ struct AnyViewStorage {
 
     private let elements: (RenderProposal?, [Int], StateRuntime?) -> [RenderedElement]
 
+    private let stackChildElements: (RenderProposal?, [Int], StateRuntime?) -> [StackChild]
+
     init<Content: View>(_ content: Content) {
         self.element = { proposal, path, runtime in
             ViewResolver.element(
+                from: content,
+                in: proposal,
+                path: path,
+                runtime: runtime
+            )
+        }
+        self.stackChildElements = { proposal, path, runtime in
+            ViewResolver.stackChildren(
                 from: content,
                 in: proposal,
                 path: path,
@@ -245,6 +255,14 @@ struct AnyViewStorage {
         runtime: StateRuntime?
     ) -> [RenderedElement] {
         elements(proposal, path, runtime)
+    }
+
+    func stackChildren(
+        in proposal: RenderProposal?,
+        path: [Int],
+        runtime: StateRuntime?
+    ) -> [StackChild] {
+        stackChildElements(proposal, path, runtime)
     }
 
     func renderedBlock() -> RenderedBlock? {

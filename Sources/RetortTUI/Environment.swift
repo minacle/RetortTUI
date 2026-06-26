@@ -68,7 +68,9 @@ public struct Environment<Value> {
     }
 }
 
-struct EnvironmentValueView<Content: View, Value>: View, EnvironmentModifierRenderable {
+struct EnvironmentValueView<Content: View, Value>: View, EnvironmentModifierRenderable,
+    LayoutTraitRenderable
+{
 
     typealias Body = Never
 
@@ -78,6 +80,10 @@ struct EnvironmentValueView<Content: View, Value>: View, EnvironmentModifierRend
 
     let value: Value
 
+    var layoutTraits: LayoutTraits {
+        ViewResolver.layoutTraits(from: content)
+    }
+
     func renderedBlock(
         in proposal: RenderProposal?,
         path: [Int],
@@ -105,7 +111,9 @@ struct EnvironmentValueView<Content: View, Value>: View, EnvironmentModifierRend
     }
 }
 
-struct TransformedEnvironmentView<Content: View, Value>: View, EnvironmentModifierRenderable {
+struct TransformedEnvironmentView<Content: View, Value>: View,
+    EnvironmentModifierRenderable, LayoutTraitRenderable
+{
 
     typealias Body = Never
 
@@ -115,6 +123,10 @@ struct TransformedEnvironmentView<Content: View, Value>: View, EnvironmentModifi
 
     let transform: (inout Value) -> Void
 
+    var layoutTraits: LayoutTraits {
+        ViewResolver.layoutTraits(from: content)
+    }
+
     func renderedBlock(
         in proposal: RenderProposal?,
         path: [Int],
@@ -142,7 +154,9 @@ struct TransformedEnvironmentView<Content: View, Value>: View, EnvironmentModifi
     }
 }
 
-struct OnTerminateView<Content: View>: View, TerminationModifierRenderable {
+struct OnTerminateView<Content: View>: View, TerminationModifierRenderable,
+    LayoutTraitRenderable
+{
 
     typealias Body = Never
 
@@ -151,6 +165,10 @@ struct OnTerminateView<Content: View>: View, TerminationModifierRenderable {
     let actionPath: [Int]?
 
     let action: () -> Void
+
+    var layoutTraits: LayoutTraits {
+        ViewResolver.layoutTraits(from: content)
+    }
 
     func renderedBlock(
         in proposal: RenderProposal?,

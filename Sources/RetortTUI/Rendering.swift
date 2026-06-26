@@ -378,6 +378,48 @@ enum RenderedElement: Equatable, Sendable {
     case spacer(minLength: Int)
 }
 
+struct LayoutTraits: Sendable {
+
+    var flexibleAxes: Axis.Set = []
+
+    func removingFlexibleAxes(_ axes: Axis.Set) -> LayoutTraits {
+        var traits = self
+        traits.flexibleAxes.subtract(axes)
+        return traits
+    }
+}
+
+protocol LayoutTraitRenderable {
+
+    var layoutTraits: LayoutTraits { get }
+}
+
+struct StackChild {
+
+    var traits: LayoutTraits
+
+    var render: (RenderProposal?, Bool) -> RenderedElement?
+}
+
+enum LayoutMeasurementContext {
+
+    private static let threadKey = "RetortTUI.LayoutMeasurementContext"
+
+    static var isMeasuring: Bool {
+        Thread.current.threadDictionary[threadKey] as? Bool ?? false
+    }
+
+    static func withMeasurement<Value>(_ operation: () -> Value) -> Value {
+        let previous = isMeasuring
+        Thread.current.threadDictionary[threadKey] = true
+        defer {
+            Thread.current.threadDictionary[threadKey] = previous
+        }
+
+        return operation()
+    }
+}
+
 protocol FlattenableViewContent {
 
     func renderedElements(
@@ -385,6 +427,12 @@ protocol FlattenableViewContent {
         path: [Int],
         runtime: StateRuntime?
     ) -> [RenderedElement]
+
+    func stackChildren(
+        in proposal: RenderProposal?,
+        path: [Int],
+        runtime: StateRuntime?
+    ) -> [StackChild]
 }
 
 extension FlattenableViewContent {
@@ -395,7 +443,12 @@ extension FlattenableViewContent {
         runtime: StateRuntime?
     ) -> RenderedBlock? {
         StackRenderer.vertical(
-            renderedElements(in: proposal, path: path, runtime: runtime),
+            renderedElements(in: proposal, path: path, runtime: runtime).map { element in
+                StackChild(
+                    traits: LayoutTraits(),
+                    render: { _, _ in element }
+                )
+            },
             alignment: .leading,
             spacing: 0,
             proposal: proposal
@@ -417,6 +470,19 @@ extension Group: FlattenableViewContent {
             runtime: runtime
         )
     }
+
+    func stackChildren(
+        in proposal: RenderProposal?,
+        path: [Int],
+        runtime: StateRuntime?
+    ) -> [StackChild] {
+        ViewResolver.stackChildren(
+            from: content,
+            in: proposal,
+            path: path + [0],
+            runtime: runtime
+        )
+    }
 }
 
 extension OptionalViewContent: FlattenableViewContent {
@@ -431,6 +497,23 @@ extension OptionalViewContent: FlattenableViewContent {
         }
 
         return ViewResolver.elements(
+            from: content,
+            in: proposal,
+            path: path + [0],
+            runtime: runtime
+        )
+    }
+
+    func stackChildren(
+        in proposal: RenderProposal?,
+        path: [Int],
+        runtime: StateRuntime?
+    ) -> [StackChild] {
+        guard let content else {
+            return []
+        }
+
+        return ViewResolver.stackChildren(
             from: content,
             in: proposal,
             path: path + [0],
@@ -463,6 +546,29 @@ extension ConditionalViewContent: FlattenableViewContent {
             )
         }
     }
+
+    func stackChildren(
+        in proposal: RenderProposal?,
+        path: [Int],
+        runtime: StateRuntime?
+    ) -> [StackChild] {
+        switch storage {
+        case .trueContent(let content):
+            ViewResolver.stackChildren(
+                from: content,
+                in: proposal,
+                path: path + [0],
+                runtime: runtime
+            )
+        case .falseContent(let content):
+            ViewResolver.stackChildren(
+                from: content,
+                in: proposal,
+                path: path + [1],
+                runtime: runtime
+            )
+        }
+    }
 }
 
 extension LimitedAvailabilityViewContent: FlattenableViewContent {
@@ -473,6 +579,19 @@ extension LimitedAvailabilityViewContent: FlattenableViewContent {
         runtime: StateRuntime?
     ) -> [RenderedElement] {
         ViewResolver.elements(
+            from: content,
+            in: proposal,
+            path: path + [0],
+            runtime: runtime
+        )
+    }
+
+    func stackChildren(
+        in proposal: RenderProposal?,
+        path: [Int],
+        runtime: StateRuntime?
+    ) -> [StackChild] {
+        ViewResolver.stackChildren(
             from: content,
             in: proposal,
             path: path + [0],
@@ -516,6 +635,39 @@ extension ForEach: FlattenableViewContent {
         return renderedElements
     }
 
+    func stackChildren(
+        in proposal: RenderProposal?,
+        path: [Int],
+        runtime: StateRuntime?
+    ) -> [StackChild] {
+        var seenIDs: Set<AnyHashable> = []
+        var activeIDs: [AnyHashable] = []
+        let children = data.enumerated().flatMap { offset, element in
+            let elementID = AnyHashable(element[keyPath: id])
+            precondition(
+                seenIDs.insert(elementID).inserted,
+                "ForEach data IDs must be unique."
+            )
+
+            activeIDs.append(elementID)
+            let childIndex = runtime?.forEachChildIndex(
+                at: path,
+                id: elementID
+            ) ?? offset
+            let childPath = path + [childIndex]
+            let child = contentElement(element, runtime: runtime)
+            return ViewResolver.stackChildren(
+                from: child,
+                in: proposal,
+                path: childPath,
+                runtime: runtime
+            )
+        }
+
+        runtime?.finishForEachRender(at: path, activeIDs: activeIDs)
+        return children
+    }
+
     private func contentElement(
         _ element: Data.Element,
         runtime: StateRuntime?
@@ -544,7 +696,12 @@ enum ViewResolver {
         from view: Content,
         in proposal: RenderProposal?
     ) -> RenderedBlock? {
-        block(from: view, in: proposal, path: [], runtime: nil)
+        block(
+            from: view,
+            in: rootProposal(for: view, proposal: proposal),
+            path: [],
+            runtime: nil
+        )
     }
 
     static func block<Content: View>(
@@ -580,7 +737,7 @@ enum ViewResolver {
         if let group = view as? ViewGroup {
             return StackRenderer.vertical(
                 group.elements.enumerated().flatMap { index, element in
-                    element.renderedElements(
+                    element.stackChildren(
                         in: proposal,
                         path: path + [index],
                         runtime: runtime
@@ -866,7 +1023,7 @@ extension HStack: StackRenderable {
         runtime: StateRuntime?
     ) -> RenderedBlock? {
         StackRenderer.horizontal(
-            ViewResolver.elements(
+            ViewResolver.stackChildren(
                 from: content,
                 in: RenderProposal(rows: proposal?.rows),
                 path: path + [0],
@@ -887,7 +1044,7 @@ extension VStack: StackRenderable {
         runtime: StateRuntime?
     ) -> RenderedBlock? {
         StackRenderer.vertical(
-            ViewResolver.elements(
+            ViewResolver.stackChildren(
                 from: content,
                 in: RenderProposal(columns: proposal?.columns),
                 path: path + [0],
@@ -946,6 +1103,83 @@ extension ViewResolver {
             runtime: runtime
         ).map { [$0] } ?? []
     }
+
+    static func stackChildren<Content: View>(
+        from view: Content,
+        in proposal: RenderProposal?,
+        path: [Int],
+        runtime: StateRuntime?
+    ) -> [StackChild] {
+        if let group = view as? ViewGroup {
+            return group.elements.enumerated().flatMap { index, element in
+                element.stackChildren(
+                    in: proposal,
+                    path: path + [index],
+                    runtime: runtime
+                )
+            }
+        }
+
+        if let content = view as? any FlattenableViewContent {
+            return content.stackChildren(in: proposal, path: path, runtime: runtime)
+        }
+
+        let traits = layoutTraits(from: view)
+        return [
+            StackChild(
+                traits: traits,
+                render: { childProposal, suppressRegistrations in
+                    let render = {
+                        element(
+                            from: view,
+                            in: childProposal,
+                            path: path,
+                            runtime: runtime
+                        )
+                    }
+
+                    if suppressRegistrations {
+                        return LayoutMeasurementContext.withMeasurement {
+                            runtime?.withoutRenderRegistrations(render) ?? render()
+                        }
+                    }
+
+                    return render()
+                }
+            ),
+        ]
+    }
+
+    static func layoutTraits<Content: View>(from view: Content) -> LayoutTraits {
+        if let traits = view as? any LayoutTraitRenderable {
+            return traits.layoutTraits
+        }
+
+        guard Content.Body.self != Never.self else {
+            return LayoutTraits()
+        }
+
+        return layoutTraits(from: view.body)
+    }
+
+    static func rootProposal<Content: View>(
+        for view: Content,
+        proposal: RenderProposal?
+    ) -> RenderProposal? {
+        guard let traits = view as? any LayoutTraitRenderable else {
+            return proposal
+        }
+
+        let axes = traits.layoutTraits.flexibleAxes
+        guard !axes.isEmpty else {
+            return proposal
+        }
+
+        return RenderProposal(
+            columns: axes.contains(.horizontal) ? proposal?.columns : nil,
+            rows: axes.contains(.vertical) ? proposal?.rows : nil
+        )
+    }
 }
 
 private extension RenderedElement {
@@ -962,12 +1196,12 @@ private extension RenderedElement {
 enum StackRenderer {
 
     static func horizontal(
-        _ elements: [RenderedElement],
+        _ children: [StackChild],
         alignment: VerticalAlignment,
         spacing: Int,
         proposal: RenderProposal? = nil
     ) -> RenderedBlock? {
-        let items = horizontalItems(from: elements, spacing: spacing, proposal: proposal)
+        let items = horizontalItems(from: children, spacing: spacing, proposal: proposal)
         guard !items.isEmpty else {
             return nil
         }
@@ -995,12 +1229,12 @@ enum StackRenderer {
     }
 
     static func vertical(
-        _ elements: [RenderedElement],
+        _ children: [StackChild],
         alignment: HorizontalAlignment,
         spacing: Int,
         proposal: RenderProposal? = nil
     ) -> RenderedBlock? {
-        let items = verticalItems(from: elements, spacing: spacing, proposal: proposal)
+        let items = verticalItems(from: children, spacing: spacing, proposal: proposal)
         guard !items.isEmpty else {
             return nil
         }
@@ -1071,84 +1305,233 @@ enum StackRenderer {
         }
     }
 
+    struct MeasuredChild {
+
+        var content: RenderedElement
+
+        var traits: LayoutTraits
+
+        var render: (RenderProposal?, Bool) -> RenderedElement?
+    }
+
     private static func horizontalItems(
-        from elements: [RenderedElement],
+        from children: [StackChild],
         spacing: Int,
         proposal: RenderProposal?
     ) -> [HorizontalItem] {
-        let elements = elements.filter(\.isRenderable)
-        let spacerCount = elements.spacerCount
-        let idealWidth = elements.reduce(0) { width, element in
-            width + element.horizontalLength
-        } + spacingWidth(for: elements.count, spacing: spacing)
+        let children = measuredChildren(
+            from: children,
+            proposal: proposal,
+            stackAxis: .horizontal,
+            childProposal: horizontalChildProposal
+        )
+        let flexibleCount = children.horizontalFlexibleCount
+        let spacingWidth = spacingWidth(for: children.count, spacing: spacing)
+        let minimums = children.horizontalMinimums
+        let idealWidth = children.reduce(0) { width, child in
+            width + child.content.horizontalLength
+        } + spacingWidth
         let targetWidth: Int
-        if spacerCount > 0, let columns = proposal?.columns {
-            targetWidth = max(columns, idealWidth)
+        let fixedWidth = fixedHorizontalWidth(from: children)
+        if flexibleCount > 0, let columns = proposal?.columns {
+            targetWidth = max(columns, fixedWidth + minimums.reduce(0, +) + spacingWidth)
         }
         else {
             targetWidth = idealWidth
         }
 
-        let spacerLengths = flexibleLengths(
-            count: spacerCount,
-            minimums: elements.spacerMinimums,
-            extra: targetWidth - idealWidth
+        let flexibleLengths = flexibleLengths(
+            count: flexibleCount,
+            minimums: minimums,
+            extra: targetWidth - minimums.reduce(0, +) - fixedWidth - spacingWidth
         )
-        var spacerIndex = 0
+        var flexibleIndex = 0
         var x = 0
-        return elements.map { element in
-            switch element {
+        return children.compactMap { child in
+            let element: RenderedElement
+            let itemWidth: Int
+            switch child.content {
             case .block(let block):
-                let item = HorizontalItem(content: element, x: x, width: block.width)
-                x += block.width + max(spacing, 0)
-                return item
+                if child.traits.flexibleAxes.contains(.horizontal) {
+                    let width = flexibleLengths[flexibleIndex]
+                    flexibleIndex += 1
+                    element = child.render(
+                        horizontalChildProposal(
+                            width,
+                            traits: child.traits,
+                            stackProposal: proposal
+                        ),
+                        false
+                    ) ?? .block(block)
+                }
+                else {
+                    element = child.content
+                }
+                itemWidth = element.horizontalLength
             case .spacer:
-                let width = spacerLengths[spacerIndex]
-                spacerIndex += 1
-                let item = HorizontalItem(content: element, x: x, width: width)
-                x += width + max(spacing, 0)
-                return item
+                itemWidth = flexibleLengths[flexibleIndex]
+                flexibleIndex += 1
+                element = child.content
             }
+
+            guard element.isRenderable else {
+                return nil
+            }
+
+            let item = HorizontalItem(content: element, x: x, width: itemWidth)
+            x += item.width + max(spacing, 0)
+            return item
         }
     }
 
     private static func verticalItems(
-        from elements: [RenderedElement],
+        from children: [StackChild],
         spacing: Int,
         proposal: RenderProposal?
     ) -> [VerticalItem] {
-        let elements = elements.filter(\.isRenderable)
-        let spacerCount = elements.spacerCount
-        let idealHeight = elements.reduce(0) { height, element in
-            height + element.verticalLength
-        } + spacingWidth(for: elements.count, spacing: spacing)
+        let children = measuredChildren(
+            from: children,
+            proposal: proposal,
+            stackAxis: .vertical,
+            childProposal: verticalChildProposal
+        )
+        let flexibleCount = children.verticalFlexibleCount
+        let spacingHeight = spacingWidth(for: children.count, spacing: spacing)
+        let minimums = children.verticalMinimums
+        let idealHeight = children.reduce(0) { height, child in
+            height + child.content.verticalLength
+        } + spacingHeight
         let targetHeight: Int
-        if spacerCount > 0, let rows = proposal?.rows {
-            targetHeight = max(rows, idealHeight)
+        let fixedHeight = fixedVerticalHeight(from: children)
+        if flexibleCount > 0, let rows = proposal?.rows {
+            targetHeight = max(rows, fixedHeight + minimums.reduce(0, +) + spacingHeight)
         }
         else {
             targetHeight = idealHeight
         }
 
-        let spacerLengths = flexibleLengths(
-            count: spacerCount,
-            minimums: elements.spacerMinimums,
-            extra: targetHeight - idealHeight
+        let flexibleLengths = flexibleLengths(
+            count: flexibleCount,
+            minimums: minimums,
+            extra: targetHeight - minimums.reduce(0, +) - fixedHeight - spacingHeight
         )
-        var spacerIndex = 0
+        var flexibleIndex = 0
         var y = 0
-        return elements.map { element in
-            switch element {
+        return children.compactMap { child in
+            let element: RenderedElement
+            let itemHeight: Int
+            switch child.content {
             case .block(let block):
-                let item = VerticalItem(content: element, y: y, height: block.height)
-                y += block.height + max(spacing, 0)
-                return item
+                if child.traits.flexibleAxes.contains(.vertical) {
+                    let height = flexibleLengths[flexibleIndex]
+                    flexibleIndex += 1
+                    element = child.render(
+                        verticalChildProposal(
+                            height,
+                            traits: child.traits,
+                            stackProposal: proposal
+                        ),
+                        false
+                    ) ?? .block(block)
+                }
+                else {
+                    element = child.content
+                }
+                itemHeight = element.verticalLength
             case .spacer:
-                let height = spacerLengths[spacerIndex]
-                spacerIndex += 1
-                let item = VerticalItem(content: element, y: y, height: height)
-                y += height + max(spacing, 0)
-                return item
+                itemHeight = flexibleLengths[flexibleIndex]
+                flexibleIndex += 1
+                element = child.content
+            }
+
+            guard element.isRenderable else {
+                return nil
+            }
+
+            let item = VerticalItem(content: element, y: y, height: itemHeight)
+            y += item.height + max(spacing, 0)
+            return item
+        }
+    }
+
+    private static func measuredChildren(
+        from children: [StackChild],
+        proposal: RenderProposal?,
+        stackAxis: Axis,
+        childProposal: (Int?, LayoutTraits, RenderProposal?) -> RenderProposal
+    ) -> [MeasuredChild] {
+        children.compactMap { child in
+            let flexibleOnStackAxis: Bool
+            switch stackAxis {
+            case .horizontal:
+                flexibleOnStackAxis = child.traits.flexibleAxes.contains(.horizontal)
+            case .vertical:
+                flexibleOnStackAxis = child.traits.flexibleAxes.contains(.vertical)
+            }
+
+            guard let content = child.render(
+                childProposal(nil, child.traits, proposal),
+                flexibleOnStackAxis
+            ), content.isRenderable else {
+                return nil
+            }
+
+            return MeasuredChild(
+                content: content,
+                traits: child.traits,
+                render: child.render
+            )
+        }
+    }
+
+    private static func horizontalChildProposal(
+        _ width: Int?,
+        traits: LayoutTraits,
+        stackProposal: RenderProposal?
+    ) -> RenderProposal {
+        RenderProposal(
+            columns: width,
+            rows: traits.flexibleAxes.contains(.vertical)
+                || !traits.flexibleAxes.contains(.horizontal) ? stackProposal?.rows : nil
+        )
+    }
+
+    private static func verticalChildProposal(
+        _ height: Int?,
+        traits: LayoutTraits,
+        stackProposal: RenderProposal?
+    ) -> RenderProposal {
+        RenderProposal(
+            columns: traits.flexibleAxes.contains(.horizontal)
+                || !traits.flexibleAxes.contains(.vertical) ? stackProposal?.columns : nil,
+            rows: height
+        )
+    }
+
+    private static func fixedHorizontalWidth(from children: [MeasuredChild]) -> Int {
+        children.reduce(0) { width, child in
+            switch child.content {
+            case .block:
+                if child.traits.flexibleAxes.contains(.horizontal) {
+                    return width
+                }
+                return width + child.content.horizontalLength
+            case .spacer:
+                return width
+            }
+        }
+    }
+
+    private static func fixedVerticalHeight(from children: [MeasuredChild]) -> Int {
+        children.reduce(0) { height, child in
+            switch child.content {
+            case .block:
+                if child.traits.flexibleAxes.contains(.vertical) {
+                    return height
+                }
+                return height + child.content.verticalLength
+            case .spacer:
+                return height
             }
         }
     }
@@ -1425,6 +1808,50 @@ private extension Array where Element == RenderedElement {
 
     var spacerMinimums: [Int] {
         compactMap(\.spacerMinimum)
+    }
+}
+
+private extension Array where Element == StackRenderer.MeasuredChild {
+
+    var horizontalFlexibleCount: Int {
+        filter(\.isHorizontallyFlexible).count
+    }
+
+    var verticalFlexibleCount: Int {
+        filter(\.isVerticallyFlexible).count
+    }
+
+    var horizontalMinimums: [Int] {
+        compactMap { child in
+            child.isHorizontallyFlexible ? child.content.spacerMinimum ?? 0 : nil
+        }
+    }
+
+    var verticalMinimums: [Int] {
+        compactMap { child in
+            child.isVerticallyFlexible ? child.content.spacerMinimum ?? 0 : nil
+        }
+    }
+}
+
+private extension StackRenderer.MeasuredChild {
+
+    var isHorizontallyFlexible: Bool {
+        switch content {
+        case .block:
+            return traits.flexibleAxes.contains(.horizontal)
+        case .spacer:
+            return true
+        }
+    }
+
+    var isVerticallyFlexible: Bool {
+        switch content {
+        case .block:
+            return traits.flexibleAxes.contains(.vertical)
+        case .spacer:
+            return true
+        }
     }
 }
 

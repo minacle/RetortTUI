@@ -116,7 +116,7 @@ public struct Alignment: Equatable, Sendable {
 }
 
 /// A transparent modifier that proposes a fixed terminal size to its content.
-struct FrameView<Content: View>: View, LayoutModifierRenderable {
+struct FrameView<Content: View>: View, LayoutModifierRenderable, LayoutTraitRenderable {
 
     typealias Body = Never
 
@@ -127,6 +127,17 @@ struct FrameView<Content: View>: View, LayoutModifierRenderable {
     let height: Int?
 
     let alignment: Alignment
+
+    var layoutTraits: LayoutTraits {
+        var traits = ViewResolver.layoutTraits(from: content)
+        if width != nil {
+            traits = traits.removingFlexibleAxes(.horizontal)
+        }
+        if height != nil {
+            traits = traits.removingFlexibleAxes(.vertical)
+        }
+        return traits
+    }
 
     func renderedBlock(
         in proposal: RenderProposal?,
@@ -154,7 +165,9 @@ struct FrameView<Content: View>: View, LayoutModifierRenderable {
 }
 
 /// A transparent modifier that constrains the terminal size proposed to its content.
-struct ConstrainedFrameView<Content: View>: View, LayoutModifierRenderable {
+struct ConstrainedFrameView<Content: View>: View, LayoutModifierRenderable,
+    LayoutTraitRenderable
+{
 
     typealias Body = Never
 
@@ -173,6 +186,10 @@ struct ConstrainedFrameView<Content: View>: View, LayoutModifierRenderable {
     let maxHeight: Int?
 
     let alignment: Alignment
+
+    var layoutTraits: LayoutTraits {
+        ViewResolver.layoutTraits(from: content)
+    }
 
     init(
         content: Content,
@@ -299,7 +316,7 @@ struct ConstrainedFrameView<Content: View>: View, LayoutModifierRenderable {
 }
 
 /// A transparent modifier that removes selected proposed dimensions from its content.
-struct FixedSizeView<Content: View>: View, LayoutModifierRenderable {
+struct FixedSizeView<Content: View>: View, LayoutModifierRenderable, LayoutTraitRenderable {
 
     typealias Body = Never
 
@@ -308,6 +325,17 @@ struct FixedSizeView<Content: View>: View, LayoutModifierRenderable {
     let horizontal: Bool
 
     let vertical: Bool
+
+    var layoutTraits: LayoutTraits {
+        var traits = ViewResolver.layoutTraits(from: content)
+        if horizontal {
+            traits = traits.removingFlexibleAxes(.horizontal)
+        }
+        if vertical {
+            traits = traits.removingFlexibleAxes(.vertical)
+        }
+        return traits
+    }
 
     func renderedBlock(
         in proposal: RenderProposal?,
@@ -327,13 +355,17 @@ struct FixedSizeView<Content: View>: View, LayoutModifierRenderable {
 }
 
 /// A transparent modifier that adds terminal-cell padding around its content.
-struct PaddingView<Content: View>: View, LayoutModifierRenderable {
+struct PaddingView<Content: View>: View, LayoutModifierRenderable, LayoutTraitRenderable {
 
     typealias Body = Never
 
     let content: Content
 
     let insets: EdgeInsets
+
+    var layoutTraits: LayoutTraits {
+        ViewResolver.layoutTraits(from: content)
+    }
 
     func renderedBlock(
         in proposal: RenderProposal?,

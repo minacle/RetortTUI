@@ -900,6 +900,202 @@ import Testing
     #expect(block?.lines == ["GHI", "LMN"])
 }
 
+@Test func topLevelScrollViewsExpandAlongScrollableAxesOnly() {
+    let vertical = ScrollView {
+        VStack {
+            Text("V0")
+            Text("V1")
+            Text("V2")
+        }
+    }
+    let horizontal = ScrollView(.horizontal) {
+        Text("H012345")
+    }
+    let both = ScrollView([.horizontal, .vertical]) {
+        VStack(alignment: .leading) {
+            Text("B012345")
+            Text("B1")
+        }
+    }
+
+    let verticalBlock = ViewResolver.block(
+        from: vertical,
+        in: RenderProposal(columns: 8, rows: 4)
+    )
+    let horizontalBlock = ViewResolver.block(
+        from: horizontal,
+        in: RenderProposal(columns: 5, rows: 4)
+    )
+    let bothBlock = ViewResolver.block(
+        from: both,
+        in: RenderProposal(columns: 5, rows: 3)
+    )
+
+    #expect(verticalBlock?.lines == ["V0", "V1", "V2", "  "])
+    #expect(horizontalBlock?.lines == ["H0123"])
+    #expect(bothBlock?.lines == ["B0123", "B1   ", "     "])
+    #expect(verticalBlock?.scrollRegions.map(\.frame) == [
+        RenderedRect(x: 0, y: 0, width: 2, height: 4),
+    ])
+    #expect(horizontalBlock?.scrollRegions.map(\.frame) == [
+        RenderedRect(x: 0, y: 0, width: 5, height: 1),
+    ])
+    #expect(bothBlock?.scrollRegions.map(\.frame) == [
+        RenderedRect(x: 0, y: 0, width: 5, height: 3),
+    ])
+}
+
+@Test func runtimeRootScrollViewUsesTopLevelExpansionRules() {
+    let runtime = StateRuntime()
+    let scrollView = ScrollView(.horizontal) {
+        Text("ABCDE")
+    }
+
+    let block = runtime.block(from: scrollView, in: RenderProposal(columns: 3, rows: 2))
+
+    #expect(block?.lines == ["ABC"])
+    #expect(block?.scrollRegions.map(\.frame) == [
+        RenderedRect(x: 0, y: 0, width: 3, height: 1),
+    ])
+}
+
+@Test func scrollViewsExpandAlongScrollableAxesInsideHStack() {
+    let stack = HStack {
+        ScrollView {
+            VStack {
+                Text("V0")
+                Text("V1")
+                Text("V2")
+            }
+        }
+        ScrollView(.horizontal) {
+            Text("H0123456789")
+        }
+    }
+
+    let block = ViewResolver.block(from: stack, in: RenderProposal(columns: 8, rows: 4))
+
+    #expect(block?.lines == [
+        "V0      ",
+        "V1H01234",
+        "V2      ",
+        "        ",
+    ])
+    #expect(block?.scrollRegions.map(\.frame) == [
+        RenderedRect(x: 0, y: 0, width: 2, height: 4),
+        RenderedRect(x: 2, y: 1, width: 6, height: 1),
+    ])
+}
+
+@Test func scrollViewsExpandAlongScrollableAxesInsideVStack() {
+    let stack = VStack(alignment: .leading) {
+        ScrollView(.horizontal) {
+            Text("ABCDE")
+        }
+        ScrollView {
+            VStack {
+                Text("V0")
+                Text("V1")
+                Text("V2")
+            }
+        }
+        ScrollView([.horizontal, .vertical]) {
+            VStack(alignment: .leading) {
+                Text("B012345")
+                Text("B1")
+            }
+        }
+    }
+
+    let block = ViewResolver.block(from: stack, in: RenderProposal(columns: 5, rows: 6))
+
+    #expect(block?.lines == [
+        "ABCDE",
+        "V0   ",
+        "V1   ",
+        "V2   ",
+        "B0123",
+        "B1   ",
+    ])
+}
+
+@Test func scrollViewAndSpacerShareStackRemainder() {
+    let stack = HStack {
+        ScrollView(.horizontal) {
+            Text("ABCDE")
+        }
+        Spacer()
+        Text("Z")
+    }
+
+    let block = ViewResolver.block(from: stack, in: RenderProposal(columns: 10))
+
+    #expect(block?.lines == ["ABCDE    Z"])
+}
+
+@Test func fixedSizeAndFramePreventScrollExpansionOnFixedAxes() {
+    let fixedSize = HStack {
+        ScrollView(.horizontal) {
+            Text("ABCDE")
+        }
+        .fixedSize(horizontal: true, vertical: false)
+        Text("Z")
+    }
+    let fixedFrame = HStack {
+        ScrollView(.horizontal) {
+            Text("ABCDE")
+        }
+        .frame(width: 3, alignment: .leading)
+        Text("Z")
+    }
+
+    #expect(ViewResolver.block(from: fixedSize, in: RenderProposal(columns: 10))?.lines == ["ABCDEZ"])
+    #expect(ViewResolver.block(from: fixedFrame, in: RenderProposal(columns: 10))?.lines == ["ABCZ"])
+}
+
+@Test func scrollExpansionPreservesWrappedHitFocusAndScrollRegions() {
+    let runtime = StateRuntime()
+    let tapProbe = TapGestureProbe()
+    let view = HStack {
+        ScrollView(.horizontal) {
+            Text("ABCDE")
+        }
+        .scrollPosition(.constant(ScrollPosition(x: 1)))
+        .padding(.horizontal, 1)
+        .onTapGesture {
+            tapProbe.record("tap")
+        }
+        .focusable()
+    }
+
+    let block = runtime.block(from: view, in: RenderProposal(columns: 5, rows: 1))
+
+    #expect(block?.lines == [" BCD "])
+    #expect(block?.scrollRegions.map(\.frame) == [RenderedRect(x: 1, y: 0, width: 3, height: 1)])
+    #expect(block?.hitRegions.map(\.frame) == [RenderedRect(x: 0, y: 0, width: 5, height: 1)])
+    #expect(block?.focusRegions.map(\.frame) == [RenderedRect(x: 0, y: 0, width: 5, height: 1)])
+}
+
+@Test func stackMeasurementDoesNotUpdateScrollPositionBindingBeforeFinalViewport() {
+    var position = ScrollPosition(x: 99)
+    let view = HStack {
+        ScrollView(.horizontal) {
+            Text("ABCDE")
+        }
+        .scrollPosition(
+            Binding(
+                get: { position },
+                set: { position = $0 }
+            )
+        )
+    }
+
+    let block = ViewResolver.block(from: view, in: RenderProposal(columns: 3))
+
+    #expect(block?.lines == ["CDE"])
+    #expect(position.point == ScrollPoint(x: 2))
+}
+
 @Test func scrollPositionMutatingMethodsReplacePosition() {
     var position = ScrollPosition()
     #expect(position.point == nil)
@@ -957,6 +1153,7 @@ import Testing
         Text("ABCDE")
     }
     .scrollPosition(.constant(ScrollPosition(x: 2, y: 0)))
+    .frame(width: 3, height: 1, alignment: .leading)
     let horizontal = ScrollView(.horizontal) {
         VStack {
             Text("ABC")
@@ -964,15 +1161,10 @@ import Testing
         }
     }
     .scrollPosition(.constant(ScrollPosition(x: 0, y: 1)))
+    .frame(width: 3, height: 1, alignment: .topLeading)
 
-    let verticalBlock = ViewResolver.block(
-        from: vertical,
-        in: RenderProposal(columns: 3, rows: 1)
-    )
-    let horizontalBlock = ViewResolver.block(
-        from: horizontal,
-        in: RenderProposal(columns: 3, rows: 1)
-    )
+    let verticalBlock = ViewResolver.block(from: vertical)
+    let horizontalBlock = ViewResolver.block(from: horizontal)
 
     #expect(verticalBlock?.lines == ["ABC"])
     #expect(horizontalBlock?.lines == ["ABC"])
@@ -1067,7 +1259,7 @@ import Testing
 }
 
 @Test func scrollViewWheelSupportsNativeHorizontalAndShiftFallback() {
-    let scrollView = ScrollView(.all) {
+    let scrollView = ScrollView([.horizontal, .vertical]) {
         VStack {
             Text("ABCDE")
             Text("FGHIJ")
@@ -1119,6 +1311,52 @@ import Testing
 
     #expect(runtime.consumeInvalidation())
     #expect(runtime.block(from: scrollView)?.lines == ["B", "C"])
+}
+
+@Test func nestedScrollViewWheelPrefersInnerRegionBeforeOuterRegion() {
+    var outerPosition = ScrollPosition()
+    var innerPosition = ScrollPosition()
+    let scrollView = ScrollView([.horizontal, .vertical]) {
+        VStack(alignment: .leading) {
+            Text("top")
+            ScrollView(.horizontal) {
+                Text("ABCDE")
+            }
+            .scrollPosition(
+                Binding(
+                    get: { innerPosition },
+                    set: { innerPosition = $0 }
+                )
+            )
+            .frame(width: 3, height: 1, alignment: .leading)
+            Text("bottom")
+        }
+    }
+    .scrollPosition(
+        Binding(
+            get: { outerPosition },
+            set: { outerPosition = $0 }
+        )
+    )
+    let runtime = StateRuntime()
+
+    #expect(
+        runtime.block(
+            from: scrollView,
+            in: RenderProposal(columns: 5, rows: 2)
+        )?.lines == ["top  ", "ABC  "]
+    )
+    dispatchWheel(to: runtime, button: .wheelDown, column: 1, row: 2)
+
+    #expect(innerPosition.point == ScrollPoint(x: 1))
+    #expect(outerPosition.point == nil)
+    #expect(runtime.consumeInvalidation())
+    #expect(
+        runtime.block(
+            from: scrollView,
+            in: RenderProposal(columns: 5, rows: 2)
+        )?.lines == ["top  ", "BCD  "]
+    )
 }
 
 @Test func scrollViewWheelIgnoresEventsOutsideRenderedRegion() {

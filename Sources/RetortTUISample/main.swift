@@ -11,7 +11,9 @@ struct RetortTUISampleApp: App {
 
     var body: some Scene {
         WindowGroup {
-            SampleRoot()
+            ScrollView([.horizontal, .vertical]) {
+                SampleRoot()
+            }
         }
     }
 }
@@ -337,6 +339,26 @@ private struct ScrollDemo: View {
             Text("h: \(horizontalPosition.description)")
             Text("xy: \(allAxisPosition.description)")
 
+            Text("stack expansion")
+            HStack(alignment: .top, spacing: 0) {
+                ScrollView(.vertical) {
+                    VStack(alignment: .leading, spacing: 0) {
+                        Text("v0")
+                        Text("v1")
+                        Text("v2")
+                        Text("v3")
+                        Text("v4")
+                        Text("v5")
+                    }
+                }
+                FourCellDivider()
+                ScrollView(.horizontal) {
+                    Text("horizontal auto expansion 0123456789 abcdefghijklmnopqrstuvwxyz")
+                }
+                FourCellDivider()
+            }
+            .frame(width: 44, height: 4, alignment: .topLeading)
+
             HStack(alignment: .top, spacing: 2) {
                 VStack(alignment: .leading, spacing: 1) {
                     Text("[top]")
@@ -393,7 +415,7 @@ private struct ScrollDemo: View {
                     }
             }
 
-            ScrollView(.all) {
+            ScrollView([.horizontal, .vertical]) {
                 VStack(alignment: .leading, spacing: 0) {
                     Text("wide row 0 | 0123456789 ABCDEFGHIJKLMNOPQRSTUVWXYZ")
                     Text("wide row 1 | 0123456789 ABCDEFGHIJKLMNOPQRSTUVWXYZ")
@@ -407,6 +429,18 @@ private struct ScrollDemo: View {
             .frame(width: 34, height: 3, alignment: .topLeading)
         }
         .padding(.vertical, 1)
+    }
+}
+
+private struct FourCellDivider: View {
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Text("|")
+            Text("|")
+            Text("|")
+            Text("|")
+        }
     }
 }
 

@@ -196,13 +196,17 @@ struct MouseEvent: Equatable, Sendable {
     }
 }
 
-struct KeyPressView<Content: View>: View, InputModifierRenderable {
+struct KeyPressView<Content: View>: View, InputModifierRenderable, LayoutTraitRenderable {
 
     typealias Body = Never
 
     let content: Content
 
     let handler: KeyPressHandler
+
+    var layoutTraits: LayoutTraits {
+        ViewResolver.layoutTraits(from: content)
+    }
 
     func renderedBlock(
         in proposal: RenderProposal?,
@@ -233,13 +237,19 @@ struct KeyPressView<Content: View>: View, InputModifierRenderable {
     }
 }
 
-struct GlobalKeyPressView<Content: View>: View, InputModifierRenderable {
+struct GlobalKeyPressView<Content: View>: View, InputModifierRenderable,
+    LayoutTraitRenderable
+{
 
     typealias Body = Never
 
     let content: Content
 
     let handler: KeyPressHandler
+
+    var layoutTraits: LayoutTraits {
+        ViewResolver.layoutTraits(from: content)
+    }
 
     func renderedBlock(
         in proposal: RenderProposal?,
@@ -270,13 +280,17 @@ struct GlobalKeyPressView<Content: View>: View, InputModifierRenderable {
     }
 }
 
-struct TapGestureView<Content: View>: View, InputModifierRenderable {
+struct TapGestureView<Content: View>: View, InputModifierRenderable, LayoutTraitRenderable {
 
     typealias Body = Never
 
     let content: Content
 
     let handler: TapGestureHandler
+
+    var layoutTraits: LayoutTraits {
+        ViewResolver.layoutTraits(from: content)
+    }
 
     func renderedBlock(
         in proposal: RenderProposal?,

@@ -293,6 +293,12 @@ final class StateRuntime {
 
     private var focusGeneration = 0
 
+    private var suppressRenderRegistrations = false
+
+    var isSuppressingRenderRegistrations: Bool {
+        suppressRenderRegistrations
+    }
+
     func block<Content: View>(
         from view: Content,
         in proposal: RenderProposal? = nil
@@ -306,7 +312,12 @@ final class StateRuntime {
             }
         }
 
-        let block = ViewResolver.block(from: view, in: proposal, path: [], runtime: self)
+        let block = ViewResolver.block(
+            from: view,
+            in: ViewResolver.rootProposal(for: view, proposal: proposal),
+            path: [],
+            runtime: self
+        )
         input.updateHitRegions(block?.hitRegions ?? [])
         input.updateScrollRegions(block?.scrollRegions ?? [])
         input.updateFocusRegions(block?.focusRegions ?? [])
@@ -420,14 +431,26 @@ final class StateRuntime {
     }
 
     func registerFocusable(_ isFocusable: Bool, at path: [Int]) {
+        guard !suppressRenderRegistrations else {
+            return
+        }
+
         focus.registerFocusable(isFocusable, at: path)
     }
 
     func registerFocusAttachment(_ attachment: any FocusAttachment, at path: [Int]) {
+        guard !suppressRenderRegistrations else {
+            return
+        }
+
         focus.registerAttachment(attachment, at: path)
     }
 
     func registerKeyPressHandler(_ handler: KeyPressHandler, at path: [Int]) {
+        guard !suppressRenderRegistrations else {
+            return
+        }
+
         input.register(
             environmentRestoringKeyPressHandler(handler),
             at: path
@@ -435,6 +458,10 @@ final class StateRuntime {
     }
 
     func registerGlobalKeyPressHandler(_ handler: KeyPressHandler, at path: [Int]) {
+        guard !suppressRenderRegistrations else {
+            return
+        }
+
         input.registerGlobal(
             environmentRestoringKeyPressHandler(handler),
             at: path
@@ -442,10 +469,18 @@ final class StateRuntime {
     }
 
     func registerTapGestureHandler(_ handler: TapGestureHandler, at path: [Int]) {
+        guard !suppressRenderRegistrations else {
+            return
+        }
+
         input.register(handler, at: path)
     }
 
     func registerTerminationHandler(_ handler: TerminationHandler) {
+        guard !suppressRenderRegistrations else {
+            return
+        }
+
         terminationHandler = handler
     }
 
@@ -460,6 +495,10 @@ final class StateRuntime {
         maximumPoint: ScrollPoint,
         binding: Binding<ScrollPosition>?
     ) {
+        guard !suppressRenderRegistrations else {
+            return
+        }
+
         scrollViewStates[path] = ScrollViewState(
             axes: axes,
             point: point,
@@ -607,6 +646,16 @@ final class StateRuntime {
         StateRenderContext.current = context
         defer {
             StateRenderContext.current = previous
+        }
+
+        return operation()
+    }
+
+    func withoutRenderRegistrations<Value>(_ operation: () -> Value) -> Value {
+        let previous = suppressRenderRegistrations
+        suppressRenderRegistrations = true
+        defer {
+            suppressRenderRegistrations = previous
         }
 
         return operation()

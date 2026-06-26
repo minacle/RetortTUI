@@ -1,11 +1,15 @@
 /// A transparent view modifier that marks its content as a focus candidate.
-struct FocusableView<Content: View>: View, FocusModifierRenderable {
+struct FocusableView<Content: View>: View, FocusModifierRenderable, LayoutTraitRenderable {
 
     typealias Body = Never
 
     let content: Content
 
     let isFocusable: Bool
+
+    var layoutTraits: LayoutTraits {
+        ViewResolver.layoutTraits(from: content)
+    }
 
     func renderedBlock(
         in proposal: RenderProposal?,
@@ -54,13 +58,17 @@ struct FocusableView<Content: View>: View, FocusModifierRenderable {
 }
 
 /// A transparent view modifier that binds focus state to its content.
-struct FocusedView<Content: View>: View, FocusModifierRenderable {
+struct FocusedView<Content: View>: View, FocusModifierRenderable, LayoutTraitRenderable {
 
     typealias Body = Never
 
     let content: Content
 
     let attachment: any FocusAttachment
+
+    var layoutTraits: LayoutTraits {
+        ViewResolver.layoutTraits(from: content)
+    }
 
     func renderedBlock(
         in proposal: RenderProposal?,

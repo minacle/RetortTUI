@@ -37,13 +37,17 @@ public extension TextField where Label == Text {
     }
 }
 
-struct SubmitView<Content: View>: View, SubmitModifierRenderable {
+struct SubmitView<Content: View>: View, SubmitModifierRenderable, LayoutTraitRenderable {
 
     typealias Body = Never
 
     let content: Content
 
     let action: SubmitAction
+
+    var layoutTraits: LayoutTraits {
+        ViewResolver.layoutTraits(from: content)
+    }
 
     func renderedBlock(
         in proposal: RenderProposal?,

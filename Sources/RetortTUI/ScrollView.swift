@@ -19,8 +19,6 @@ public enum Axis: Sendable {
         public static let horizontal = Set(rawValue: 1 << 0)
 
         public static let vertical = Set(rawValue: 1 << 1)
-
-        public static let all: Set = [.horizontal, .vertical]
     }
 }
 
@@ -150,13 +148,19 @@ public struct ScrollView<Content: View>: View {
     }
 }
 
-struct ScrollPositionView<Content: View>: View, ScrollPositionModifierRenderable {
+struct ScrollPositionView<Content: View>: View, ScrollPositionModifierRenderable,
+    LayoutTraitRenderable
+{
 
     typealias Body = Never
 
     let content: Content
 
     let position: Binding<ScrollPosition>
+
+    var layoutTraits: LayoutTraits {
+        ViewResolver.layoutTraits(from: content)
+    }
 
     func renderedBlock(
         in proposal: RenderProposal?,
@@ -221,7 +225,11 @@ public extension View {
     }
 }
 
-extension ScrollView: ScrollRenderable {
+extension ScrollView: ScrollRenderable, LayoutTraitRenderable {
+
+    var layoutTraits: LayoutTraits {
+        LayoutTraits(flexibleAxes: axes)
+    }
 
     func renderedBlock(
         in proposal: RenderProposal?,
@@ -254,7 +262,10 @@ extension ScrollView: ScrollRenderable {
             maximumPoint: result.maximumPoint,
             binding: binding
         )
-        if binding != nil && (position.point != nil || position.edge != nil) {
+        if binding != nil
+            && !LayoutMeasurementContext.isMeasuring
+            && runtime?.isSuppressingRenderRegistrations != true
+            && (position.point != nil || position.edge != nil) {
             ScrollPositionContext.updateCurrentPosition(to: ScrollPosition(point: result.point))
         }
 
@@ -379,6 +390,20 @@ enum ScrollViewRenderer {
                     height: height,
                     constrainToBounds: proposal?.columns != nil
                 ),
+                hitRegions: hitRegions(
+                    from: content.hitRegions,
+                    x: clampedX,
+                    y: clampedY,
+                    width: width,
+                    height: height
+                ),
+                scrollRegions: scrollRegions(
+                    from: content.scrollRegions,
+                    x: clampedX,
+                    y: clampedY,
+                    width: width,
+                    height: height
+                ),
                 focusRegions: focusRegions(
                     from: content.focusRegions,
                     x: clampedX,
@@ -425,6 +450,32 @@ enum ScrollViewRenderer {
             offset += 1
         }
         return offset
+    }
+
+    private static func hitRegions(
+        from regions: [RenderedHitRegion],
+        x: Int,
+        y: Int,
+        width: Int,
+        height: Int
+    ) -> [RenderedHitRegion] {
+        let bounds = RenderedRect(width: width, height: height)
+        return regions.compactMap {
+            $0.offsetBy(x: -x, y: -y).clipped(to: bounds)
+        }
+    }
+
+    private static func scrollRegions(
+        from regions: [RenderedScrollRegion],
+        x: Int,
+        y: Int,
+        width: Int,
+        height: Int
+    ) -> [RenderedScrollRegion] {
+        let bounds = RenderedRect(width: width, height: height)
+        return regions.compactMap {
+            $0.offsetBy(x: -x, y: -y).clipped(to: bounds)
+        }
     }
 
     private static func focusRegions(
