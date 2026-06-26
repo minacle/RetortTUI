@@ -233,6 +233,43 @@ struct KeyPressView<Content: View>: View, InputModifierRenderable {
     }
 }
 
+struct GlobalKeyPressView<Content: View>: View, InputModifierRenderable {
+
+    typealias Body = Never
+
+    let content: Content
+
+    let handler: KeyPressHandler
+
+    func renderedBlock(
+        in proposal: RenderProposal?,
+        path: [Int],
+        runtime: StateRuntime?
+    ) -> RenderedBlock? {
+        runtime?.registerGlobalKeyPressHandler(handler, at: path)
+        return ViewResolver.block(
+            from: content,
+            in: proposal,
+            path: path,
+            runtime: runtime
+        )
+    }
+
+    func renderedElement(
+        in proposal: RenderProposal?,
+        path: [Int],
+        runtime: StateRuntime?
+    ) -> RenderedElement? {
+        runtime?.registerGlobalKeyPressHandler(handler, at: path)
+        return ViewResolver.element(
+            from: content,
+            in: proposal,
+            path: path,
+            runtime: runtime
+        )
+    }
+}
+
 struct TapGestureView<Content: View>: View, InputModifierRenderable {
 
     typealias Body = Never
@@ -398,11 +435,100 @@ public extension View {
             )
         )
     }
+
+    /// Performs an action if the user presses a key, regardless of focus.
+    func onGlobalKeyPress(
+        _ key: KeyEquivalent,
+        action: @escaping () -> KeyPress.Result
+    ) -> some View {
+        onGlobalKeyPress(key, phases: [.down, .repeat]) {
+            _ in
+
+            action()
+        }
+    }
+
+    /// Performs an action if the user presses any key, regardless of focus.
+    func onGlobalKeyPress(
+        phases: KeyPress.Phases = [.down, .repeat],
+        action: @escaping (KeyPress) -> KeyPress.Result
+    ) -> some View {
+        GlobalKeyPressView(
+            content: self,
+            handler: KeyPressHandler(
+                actionPath: StateContext.currentPath,
+                matches: {
+                    phases.contains($0.phase)
+                },
+                action: action
+            )
+        )
+    }
+
+    /// Performs an action if the user presses a key, regardless of focus.
+    func onGlobalKeyPress(
+        _ key: KeyEquivalent,
+        phases: KeyPress.Phases,
+        action: @escaping (KeyPress) -> KeyPress.Result
+    ) -> some View {
+        onGlobalKeyPress(keys: [key], phases: phases, action: action)
+    }
+
+    /// Performs an action if the user presses one or more keys, regardless of focus.
+    func onGlobalKeyPress(
+        keys: Set<KeyEquivalent>,
+        phases: KeyPress.Phases = [.down, .repeat],
+        action: @escaping (KeyPress) -> KeyPress.Result
+    ) -> some View {
+        GlobalKeyPressView(
+            content: self,
+            handler: KeyPressHandler(
+                actionPath: StateContext.currentPath,
+                matches: {
+                    keys.contains($0.key) && phases.contains($0.phase)
+                },
+                action: action
+            )
+        )
+    }
+
+    /// Performs an action if the user presses keys that generate matching characters, regardless of focus.
+    func onGlobalKeyPress(
+        characters: CharacterSet,
+        phases: KeyPress.Phases = [.down, .repeat],
+        action: @escaping (KeyPress) -> KeyPress.Result
+    ) -> some View {
+        GlobalKeyPressView(
+            content: self,
+            handler: KeyPressHandler(
+                actionPath: StateContext.currentPath,
+                matches: { keyPress in
+                    !keyPress.characters.isEmpty
+                        && keyPress.characters.unicodeScalars.allSatisfy {
+                            characters.contains($0)
+                        }
+                        && phases.contains(keyPress.phase)
+                },
+                action: action
+            )
+        )
+    }
 }
 
 final class InputRuntime {
 
+    private struct GlobalKeyPressHandler {
+
+        var path: [Int]
+
+        var order: Int
+
+        var handler: KeyPressHandler
+    }
+
     private var handlersByPath: [[Int]: [KeyPressHandler]] = [:]
+
+    private var globalHandlers: [GlobalKeyPressHandler] = []
 
     private var tapHandlersByPath: [[Int]: [TapGestureHandler]] = [:]
 
@@ -426,11 +552,22 @@ final class InputRuntime {
 
     func beginRender() {
         handlersByPath = [:]
+        globalHandlers = []
         tapHandlersByPath = [:]
     }
 
     func register(_ handler: KeyPressHandler, at path: [Int]) {
         handlersByPath[path, default: []].append(handler)
+    }
+
+    func registerGlobal(_ handler: KeyPressHandler, at path: [Int]) {
+        globalHandlers.append(
+            GlobalKeyPressHandler(
+                path: path,
+                order: globalHandlers.count,
+                handler: handler
+            )
+        )
     }
 
     func register(_ handler: TapGestureHandler, at path: [Int]) {
@@ -471,6 +608,33 @@ final class InputRuntime {
 
             path.removeLast()
         }
+    }
+
+    func dispatchGlobal(
+        _ keyPress: KeyPress,
+        perform: ([Int], () -> KeyPress.Result) -> KeyPress.Result
+    ) -> KeyPress.Result {
+        for entry in globalHandlers.sorted(by: globalHandlerPrecedes)
+            where entry.handler.matches(keyPress) {
+            let handler = entry.handler
+            let actionPath = handler.actionPath ?? []
+            if perform(actionPath, { handler.action(keyPress) }) == .handled {
+                return .handled
+            }
+        }
+
+        return .ignored
+    }
+
+    private func globalHandlerPrecedes(
+        _ lhs: GlobalKeyPressHandler,
+        _ rhs: GlobalKeyPressHandler
+    ) -> Bool {
+        if lhs.path.count != rhs.path.count {
+            return lhs.path.count > rhs.path.count
+        }
+
+        return lhs.order < rhs.order
     }
 
     private func dispatch(

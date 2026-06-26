@@ -32,6 +32,7 @@ struct AppRunner<Application: App> {
         }
 
         let runtime = StateRuntime()
+        let termination = TerminationController()
 
         let session = try TerminalSession()
         try session.start()
@@ -39,12 +40,12 @@ struct AppRunner<Application: App> {
             session.stop()
         }
 
-        render(root, using: runtime)
+        render(root, using: runtime, termination: termination)
 
         while true {
             switch TerminalControl.readInput(timeout: inputTimeout(using: runtime)) {
             case .quit:
-                return
+                runtime.dispatchTerminate()
             case .keyPress(let keyPress):
                 _ = runtime.dispatch(keyPress)
             case .mouse(let mouseEvent):
@@ -56,17 +57,26 @@ struct AppRunner<Application: App> {
             _ = runtime.dispatchExpiredTapActions()
 
             if runtime.consumeInvalidation() {
-                render(root, using: runtime)
+                render(root, using: runtime, termination: termination)
+            }
+
+            if termination.isRequested {
+                return
             }
         }
     }
 
-    private func render(_ root: any RootScene, using runtime: StateRuntime) {
+    private func render(
+        _ root: any RootScene,
+        using runtime: StateRuntime,
+        termination: TerminationController
+    ) {
         repeat {
             let viewport = TerminalControl.currentTerminalSize()
-            guard let block = runtime.block(
-                from: root.root,
-                in: RenderProposal(viewport)
+            guard let block = root.renderedBlock(
+                in: RenderProposal(viewport),
+                using: runtime,
+                termination: termination
             ) else {
                 return
             }
@@ -84,5 +94,35 @@ struct AppRunner<Application: App> {
         runtime.nextTapDeadline.map {
             max($0.timeIntervalSinceNow, 0)
         }
+    }
+}
+
+private extension RootScene {
+
+    func renderedBlock(
+        in proposal: RenderProposal,
+        using runtime: StateRuntime,
+        termination: TerminationController
+    ) -> RenderedBlock? {
+        let action = termination.action
+        return runtime.block(
+            from: root
+                .onTerminate {
+                    action()
+                }
+                .environment(\.terminate, action),
+            in: proposal
+        )
+    }
+}
+
+final class TerminationController {
+
+    private(set) var isRequested = false
+
+    lazy var action = TerminateAction {
+        [weak self] in
+
+        self?.isRequested = true
     }
 }

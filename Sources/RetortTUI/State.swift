@@ -287,6 +287,8 @@ final class StateRuntime {
 
     private var scrollViewStates: [[Int]: ScrollViewState] = [:]
 
+    private var terminationHandler: TerminationHandler?
+
     private var invalidated = false
 
     private var focusGeneration = 0
@@ -297,6 +299,7 @@ final class StateRuntime {
     ) -> RenderedBlock? {
         focus.beginRender()
         input.beginRender()
+        terminationHandler = nil
         defer {
             if focus.finishRender() {
                 invalidated = true
@@ -316,6 +319,7 @@ final class StateRuntime {
     ) -> RenderedElement? {
         focus.beginRender()
         input.beginRender()
+        terminationHandler = nil
         defer {
             if focus.finishRender() {
                 invalidated = true
@@ -424,11 +428,25 @@ final class StateRuntime {
     }
 
     func registerKeyPressHandler(_ handler: KeyPressHandler, at path: [Int]) {
-        input.register(handler, at: path)
+        input.register(
+            environmentRestoringKeyPressHandler(handler),
+            at: path
+        )
+    }
+
+    func registerGlobalKeyPressHandler(_ handler: KeyPressHandler, at path: [Int]) {
+        input.registerGlobal(
+            environmentRestoringKeyPressHandler(handler),
+            at: path
+        )
     }
 
     func registerTapGestureHandler(_ handler: TapGestureHandler, at path: [Int]) {
         input.register(handler, at: path)
+    }
+
+    func registerTerminationHandler(_ handler: TerminationHandler) {
+        terminationHandler = handler
     }
 
     func scrollPoint(at path: [Int]) -> ScrollPoint? {
@@ -504,13 +522,12 @@ final class StateRuntime {
     }
 
     func dispatch(_ keyPress: KeyPress) -> KeyPress.Result {
-        guard let activePath = focus.activePath else {
-            return .ignored
+        if let activePath = focus.activePath,
+           input.dispatch(keyPress, from: activePath, perform: performKeyPress) == .handled {
+            return .handled
         }
 
-        return input.dispatch(keyPress, from: activePath) { path, operation in
-            withView(at: path, perform: operation)
-        }
+        return input.dispatchGlobal(keyPress, perform: performKeyPress)
     }
 
     func dispatch(_ mouseEvent: MouseEvent, at date: Date = Date()) -> KeyPress.Result {
@@ -543,8 +560,42 @@ final class StateRuntime {
         }
     }
 
+    func dispatchTerminate() {
+        guard let terminationHandler else {
+            return
+        }
+
+        EnvironmentRenderContext.withValues(terminationHandler.environment) {
+            withView(at: terminationHandler.actionPath) {
+                terminationHandler.action()
+            }
+        }
+    }
+
     func updateRenderedFrame(_ frame: TextFrame) {
         input.updateRootFrame(frame)
+    }
+
+    private func performKeyPress(
+        at path: [Int],
+        operation: () -> KeyPress.Result
+    ) -> KeyPress.Result {
+        withView(at: path, perform: operation)
+    }
+
+    private func environmentRestoringKeyPressHandler(
+        _ handler: KeyPressHandler
+    ) -> KeyPressHandler {
+        let environment = EnvironmentRenderContext.current
+        return KeyPressHandler(
+            actionPath: handler.actionPath,
+            matches: handler.matches,
+            action: { keyPress in
+                EnvironmentRenderContext.withValues(environment) {
+                    handler.action(keyPress)
+                }
+            }
+        )
     }
 
     func withView<Value>(
@@ -890,6 +941,15 @@ private struct ScrollViewState {
     var maximumPoint: ScrollPoint
 
     var binding: Binding<ScrollPosition>?
+}
+
+struct TerminationHandler {
+
+    var actionPath: [Int]
+
+    var environment: EnvironmentValues
+
+    var action: () -> Void
 }
 
 private final class StateRenderContext {

@@ -18,6 +18,20 @@ struct RetortTUISampleApp: App {
 
 private struct SampleRoot: View {
 
+    @Environment(\.terminate) private var terminate
+
+    var body: some View {
+        SampleContent()
+            .onTerminate {
+                terminate()
+            }
+    }
+}
+
+private struct SampleContent: View {
+
+    @Environment(\.terminate) private var terminate
+
     @FocusState private var focusTarget: Field? = .username
 
     @FocusState private var shortcutsFocused = false
@@ -41,7 +55,7 @@ private struct SampleRoot: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 1) {
             Text("RetortTUI sample")
-            Text("Tab/Shift-Tab changes focus | + increments object | Esc clears focus | Ctrl-C exits")
+            Text("Tab/Shift-Tab changes focus | + increments object | Esc clears focus or exits | Ctrl-C exits")
 
             HStack(alignment: .top, spacing: 4) {
                 InputAndFocusDemo(
@@ -63,6 +77,7 @@ private struct SampleRoot: View {
                 profile: $profile,
                 observableCounter: observableCounter
             )
+            .environment(\.sampleMarker, "sample")
         }
         .padding(.horizontal, 1)
         .onKeyPress(.tab) {
@@ -72,9 +87,22 @@ private struct SampleRoot: View {
         .onKeyPress(keys: [.escape]) {
             _ in
 
-            focusTarget = nil
-            shortcutsFocused = false
-            keyStatus = "cleared focus"
+            if focusTarget == nil && !shortcutsFocused {
+                terminate()
+                keyStatus = "terminate"
+            }
+            else {
+                clearFocus()
+            }
+            return .handled
+        }
+        .onGlobalKeyPress(.escape) {
+            guard focusTarget == nil && !shortcutsFocused else {
+                return .ignored
+            }
+
+            terminate()
+            keyStatus = "terminate"
             return .handled
         }
         .onKeyPress(characters: CharacterSet(charactersIn: "[")) {
@@ -111,6 +139,12 @@ private struct SampleRoot: View {
         }
     }
 
+    private func clearFocus() {
+        focusTarget = nil
+        shortcutsFocused = false
+        keyStatus = "cleared focus"
+    }
+
     private func scrollAllAxes(to edge: Edge) {
         verticalScroll.scrollTo(edge: edge)
         allAxisScroll.scrollTo(edge: edge)
@@ -132,6 +166,23 @@ private struct Profile {
     var email = ""
 
     var note = "dynamic member binding"
+}
+
+private struct SampleMarkerKey: EnvironmentKey {
+
+    static let defaultValue = "default"
+}
+
+private extension EnvironmentValues {
+
+    var sampleMarker: String {
+        get {
+            self[SampleMarkerKey.self]
+        }
+        set {
+            self[SampleMarkerKey.self] = newValue
+        }
+    }
 }
 
 private final class SampleObservableCounter: ObservableObject {
@@ -392,6 +443,8 @@ private struct LayoutAndBindingDemo: View {
             Text("Layout, geometry, and state")
                 .frame(width: 78, alignment: .leading)
 
+            EnvironmentMarkerDemo()
+
             HStack(alignment: .top, spacing: 2) {
                 RowLabel("stacks")
                 VStack(alignment: .leading, spacing: 0) {
@@ -525,6 +578,18 @@ private struct LayoutAndBindingDemo: View {
             }
         }
         .padding(.top, 1)
+    }
+}
+
+private struct EnvironmentMarkerDemo: View {
+
+    @Environment(\.sampleMarker) private var marker
+
+    var body: some View {
+        HStack(spacing: 1) {
+            RowLabel("environment")
+            Text(marker)
+        }
     }
 }
 

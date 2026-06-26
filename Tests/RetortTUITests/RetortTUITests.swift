@@ -1489,6 +1489,79 @@ import Testing
     #expect(TerminalControl.input(for: 113) == .keyPress(KeyPress(key: "q", characters: "q")))
 }
 
+@Test func terminateActionPerformsStoredOperation() {
+    var didTerminate = false
+    let action = TerminateAction {
+        didTerminate = true
+    }
+
+    action()
+
+    #expect(didTerminate)
+}
+
+@Test func terminateActionCanBeReadFromEnvironment() {
+    var didTerminate = false
+    let probe = TerminateActionProbe()
+    let view = CapturedTerminateActionView(probe: probe)
+        .environment(\.terminate, TerminateAction {
+            didTerminate = true
+        })
+
+    _ = ViewResolver.text(from: view)
+    probe.action?()
+
+    #expect(didTerminate)
+}
+
+@Test func defaultTerminateHandlerRequestsTermination() {
+    let runtime = StateRuntime()
+    let termination = TerminationController()
+    let action = termination.action
+    let view = Text("A")
+        .onTerminate {
+            action()
+        }
+        .environment(\.terminate, action)
+
+    _ = runtime.block(from: view)
+    runtime.dispatchTerminate()
+
+    #expect(termination.isRequested)
+}
+
+@Test func terminateHandlerRestoresEnvironmentForAction() {
+    let runtime = StateRuntime()
+    let termination = TerminationController()
+    let action = termination.action
+    let view = EnvironmentBackedTerminateView()
+        .environment(\.terminate, action)
+
+    _ = runtime.block(from: view)
+    runtime.dispatchTerminate()
+
+    #expect(termination.isRequested)
+}
+
+@Test func customTerminateHandlerCanUpdateStateWithoutTerminating() {
+    let runtime = StateRuntime()
+    let termination = TerminationController()
+    let action = termination.action
+    let view = TerminateStatusView()
+        .onTerminate {
+            action()
+        }
+        .environment(\.terminate, action)
+
+    #expect(runtime.block(from: view)?.text == "running")
+
+    runtime.dispatchTerminate()
+
+    #expect(!termination.isRequested)
+    #expect(runtime.consumeInvalidation())
+    #expect(runtime.block(from: view)?.text == "interrupted")
+}
+
 @Test func inputEventValueTypesExposeExpectedSemantics() {
     let key: KeyEquivalent = "a"
     let modifiers: EventModifiers = [.shift, .control]
@@ -1516,6 +1589,60 @@ import Testing
     #expect(mouse.row == 3)
     #expect(mouse.modifiers == .shift)
     #expect(mouse.phase == .down)
+}
+
+@Test func environmentReadsDefaultValue() {
+    #expect(ViewResolver.text(from: EnvironmentMarkerText()) == "default")
+}
+
+@Test func environmentValueIsInheritedByChildBody() {
+    let view = EnvironmentMarkerText()
+        .environment(\.testMarker, "parent")
+
+    #expect(ViewResolver.text(from: view) == "parent")
+}
+
+@Test func nearestEnvironmentValueOverridesParentValue() {
+    let view = VStack(alignment: .leading) {
+        EnvironmentMarkerText()
+        EnvironmentMarkerText()
+            .environment(\.testMarker, "child!")
+    }
+    .environment(\.testMarker, "parent")
+
+    #expect(ViewResolver.block(from: view)?.lines == ["parent", "child!"])
+}
+
+@Test func transformEnvironmentChangesExistingValue() {
+    let view = EnvironmentMarkerText()
+        .transformEnvironment(\.testMarker) {
+            $0 += "-transformed"
+        }
+        .environment(\.testMarker, "base")
+
+    #expect(ViewResolver.text(from: view) == "base-transformed")
+}
+
+@Test func environmentValueDoesNotLeakToSibling() {
+    let view = VStack(alignment: .leading) {
+        EnvironmentMarkerText()
+            .environment(\.testMarker, "changed")
+        EnvironmentMarkerText()
+    }
+
+    #expect(ViewResolver.block(from: view)?.lines == ["changed", "default"])
+}
+
+@Test func stateDrivenEnvironmentValueUpdatesOnNextRender() {
+    let runtime = StateRuntime()
+    let probe = BindingProbe<String>()
+    let view = EnvironmentStateMarkerView(probe: probe)
+
+    #expect(runtime.block(from: view)?.text == "initial")
+
+    probe.binding?.wrappedValue = "updated"
+    #expect(runtime.consumeInvalidation())
+    #expect(runtime.block(from: view)?.text == "updated")
 }
 
 @Test func terminalParsesPrintableAndUTF8Input() {
@@ -2273,6 +2400,7 @@ import Testing
     _ = runtime.block(from: view)
 
     #expect(runtime.dispatch(KeyPress(key: "a", characters: "a")) == .ignored)
+    #expect(runtime.dispatch(KeyPress(key: .escape, characters: "\u{001B}")) == .ignored)
     #expect(keyProbe.events.isEmpty)
 }
 
@@ -2371,6 +2499,98 @@ import Testing
     #expect(runtime.dispatch(KeyPress(key: "z", characters: "z", phase: .up)) == .handled)
     #expect(runtime.dispatch(KeyPress(key: "z", characters: "z")) == .ignored)
     #expect(keyProbe.events == ["exact", "set", "characters", "phase"])
+}
+
+@Test func globalKeyPressReceivesEventsWithoutFocus() {
+    let runtime = StateRuntime()
+    let keyProbe = KeyPressProbe()
+    let view = Text("A")
+        .onGlobalKeyPress(.escape) {
+            keyProbe.record("global")
+            return .handled
+        }
+
+    #expect(runtime.block(from: view)?.text == "A")
+    #expect(runtime.dispatch(KeyPress(key: .escape, characters: "\u{001B}")) == .handled)
+    #expect(keyProbe.events == ["global"])
+}
+
+@Test func nestedGlobalKeyPressDispatchesDeepestHandlerFirst() {
+    let runtime = StateRuntime()
+    let keyProbe = KeyPressProbe()
+    let view = NestedGlobalKeyPressView(
+        keyProbe: keyProbe,
+        innerResult: .handled
+    )
+
+    _ = runtime.block(from: view)
+
+    #expect(runtime.dispatch(KeyPress(key: "a", characters: "a")) == .handled)
+    #expect(keyProbe.events == ["inner"])
+}
+
+@Test func ignoredNestedGlobalKeyPressBubblesToOuterHandler() {
+    let runtime = StateRuntime()
+    let keyProbe = KeyPressProbe()
+    let view = NestedGlobalKeyPressView(
+        keyProbe: keyProbe,
+        innerResult: .ignored
+    )
+
+    _ = runtime.block(from: view)
+
+    #expect(runtime.dispatch(KeyPress(key: "a", characters: "a")) == .handled)
+    #expect(keyProbe.events == ["inner", "outer"])
+}
+
+@Test func focusedKeyPressRunsBeforeGlobalKeyPress() {
+    let runtime = StateRuntime()
+    let keyProbe = KeyPressProbe()
+    let focusProbe = FocusBindingProbe<Bool>()
+    let view = FocusedAndGlobalKeyPressView(
+        focusProbe: focusProbe,
+        keyProbe: keyProbe,
+        focusedResult: .handled
+    )
+
+    _ = runtime.block(from: view)
+    focusProbe.binding?.wrappedValue = true
+    _ = runtime.block(from: view)
+
+    #expect(runtime.dispatch(KeyPress(key: "a", characters: "a")) == .handled)
+    #expect(keyProbe.events == ["focused"])
+}
+
+@Test func ignoredFocusedKeyPressFallsBackToGlobalKeyPress() {
+    let runtime = StateRuntime()
+    let keyProbe = KeyPressProbe()
+    let focusProbe = FocusBindingProbe<Bool>()
+    let view = FocusedAndGlobalKeyPressView(
+        focusProbe: focusProbe,
+        keyProbe: keyProbe,
+        focusedResult: .ignored
+    )
+
+    _ = runtime.block(from: view)
+    focusProbe.binding?.wrappedValue = true
+    _ = runtime.block(from: view)
+
+    #expect(runtime.dispatch(KeyPress(key: "a", characters: "a")) == .handled)
+    #expect(keyProbe.events == ["focused", "global"])
+}
+
+@Test func globalKeyPressRestoresEnvironmentForAction() {
+    var didTerminate = false
+    let runtime = StateRuntime()
+    let view = GlobalEnvironmentTerminateView()
+        .environment(\.terminate, TerminateAction {
+            didTerminate = true
+        })
+
+    _ = runtime.block(from: view)
+
+    #expect(runtime.dispatch(KeyPress(key: .escape, characters: "\u{001B}")) == .handled)
+    #expect(didTerminate)
 }
 
 @Test func tapGestureModifierDoesNotChangeRenderedOutput() {
@@ -2596,11 +2816,118 @@ private final class TapGestureProbe {
     }
 }
 
+private final class TerminateActionProbe {
+
+    var action: TerminateAction?
+
+    func capture(_ action: TerminateAction) {
+        self.action = action
+    }
+}
+
 private struct ForEachTestItem: Identifiable {
 
     let id: String
 
     let label: String
+}
+
+private struct TestMarkerKey: EnvironmentKey {
+
+    static let defaultValue = "default"
+}
+
+private extension EnvironmentValues {
+
+    var testMarker: String {
+        get {
+            self[TestMarkerKey.self]
+        }
+        set {
+            self[TestMarkerKey.self] = newValue
+        }
+    }
+}
+
+private struct EnvironmentMarkerText: View {
+
+    @Environment(\.testMarker) private var marker
+
+    var body: some View {
+        Text(marker)
+    }
+}
+
+private struct EnvironmentStateMarkerView: View {
+
+    @State var marker = "initial"
+
+    let probe: BindingProbe<String>
+
+    var body: some View {
+        EnvironmentMarkerProbe(
+            binding: $marker,
+            probe: probe
+        )
+        .environment(\.testMarker, marker)
+    }
+}
+
+private struct EnvironmentMarkerProbe: View {
+
+    init(binding: Binding<String>, probe: BindingProbe<String>) {
+        probe.capture(binding)
+    }
+
+    var body: some View {
+        EnvironmentMarkerText()
+    }
+}
+
+private struct TerminateStatusView: View {
+
+    @State var status = "running"
+
+    var body: some View {
+        Text(status)
+            .onTerminate {
+                status = "interrupted"
+            }
+    }
+}
+
+private struct EnvironmentBackedTerminateView: View {
+
+    @Environment(\.terminate) private var terminate
+
+    var body: some View {
+        Text("A")
+            .onTerminate {
+                terminate()
+            }
+    }
+}
+
+private struct CapturedTerminateActionView: View {
+
+    @Environment(\.terminate) private var terminate
+
+    let probe: TerminateActionProbe
+
+    var body: some View {
+        CapturedTerminateAction(action: terminate, probe: probe)
+    }
+}
+
+private struct CapturedTerminateAction: View {
+
+    init(action: TerminateAction, probe: TerminateActionProbe) {
+        probe.capture(action)
+    }
+
+    var body: some View {
+        Text("A")
+    }
 }
 
 private struct ForEachStateView: View {
@@ -3492,6 +3819,97 @@ private struct OrderedKeyPressView: View {
             focusProbe: focusProbe,
             keyProbe: keyProbe
         )
+    }
+}
+
+private struct FocusedAndGlobalKeyPressView: View {
+
+    @FocusState var isFocused: Bool
+
+    let focusProbe: FocusBindingProbe<Bool>
+
+    let keyProbe: KeyPressProbe
+
+    let focusedResult: KeyPress.Result
+
+    var body: some View {
+        CapturedFocusedAndGlobalKeyPressText(
+            focusBinding: $isFocused,
+            focusProbe: focusProbe,
+            keyProbe: keyProbe,
+            focusedResult: focusedResult
+        )
+    }
+}
+
+private struct NestedGlobalKeyPressView: View {
+
+    let keyProbe: KeyPressProbe
+
+    let innerResult: KeyPress.Result
+
+    var body: some View {
+        VStack {
+            VStack {
+                Text("C")
+                    .onGlobalKeyPress("a") {
+                        keyProbe.record("inner")
+                        return innerResult
+                    }
+            }
+        }
+        .onGlobalKeyPress("a") {
+            keyProbe.record("outer")
+            return .handled
+        }
+    }
+}
+
+private struct CapturedFocusedAndGlobalKeyPressText: View {
+
+    let focusBinding: FocusState<Bool>.Binding
+
+    let keyProbe: KeyPressProbe
+
+    let focusedResult: KeyPress.Result
+
+    init(
+        focusBinding: FocusState<Bool>.Binding,
+        focusProbe: FocusBindingProbe<Bool>,
+        keyProbe: KeyPressProbe,
+        focusedResult: KeyPress.Result
+    ) {
+        self.focusBinding = focusBinding
+        self.keyProbe = keyProbe
+        self.focusedResult = focusedResult
+        focusProbe.capture(focusBinding)
+    }
+
+    var body: some View {
+        Text("A")
+            .focusable()
+            .focused(focusBinding)
+            .onKeyPress("a") {
+                keyProbe.record("focused")
+                return focusedResult
+            }
+            .onGlobalKeyPress("a") {
+                keyProbe.record("global")
+                return .handled
+            }
+    }
+}
+
+private struct GlobalEnvironmentTerminateView: View {
+
+    @Environment(\.terminate) private var terminate
+
+    var body: some View {
+        Text("A")
+            .onGlobalKeyPress(.escape) {
+                terminate()
+                return .handled
+            }
     }
 }
 
