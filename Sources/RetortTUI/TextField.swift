@@ -165,7 +165,8 @@ extension TextField {
             upToCharacterOffset: fieldState?.horizontalScrollOffset ?? 0
         )
         let content = RenderedBlock(
-            lines: [displayText(using: text)],
+            runs: [RenderedRun(text: displayText(using: text))],
+            height: 1,
             cursor: renderedCursor(state: fieldState, isFocused: isFocused)
         )
 

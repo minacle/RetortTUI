@@ -372,20 +372,17 @@ enum ScrollViewRenderer {
         let y = axes.contains(.vertical) ? point.y : 0
         let clampedX = min(x, maximumPoint.x)
         let clampedY = min(y, maximumPoint.y)
-        let paddedLines = content.lines.map {
-            TerminalText.padded($0, toWidth: content.width)
-        }
-        let blankLine = String(repeating: " ", count: width)
-
-        let lines = (0..<height).map { row -> String in
-            let sourceRow = clampedY + row
-            let line = sourceRow < paddedLines.count ? paddedLines[sourceRow] : blankLine
-            return TerminalText.slice(line, fromColumn: clampedX, width: width)
+        let bounds = RenderedRect(width: width, height: height)
+        let runs = content.runs.flatMap {
+            $0.offsetBy(x: -clampedX, y: -clampedY).clipped(to: bounds)
         }
 
         return Result(
             block: RenderedBlock(
-                lines: lines,
+                runs: runs,
+                width: width,
+                height: height,
+                paddedRows: Set(0..<height),
                 cursor: cursor(
                     from: content.cursor,
                     x: clampedX,

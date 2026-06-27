@@ -26,7 +26,7 @@ enum TerminalText {
         )
     }
 
-    static func padded(_ text: String, toWidth width: Int) -> String {
+    static func lineProjection(_ text: String, paddedToWidth width: Int) -> String {
         text + String(repeating: " ", count: max(width - columnWidth(text), 0))
     }
 
@@ -48,43 +48,6 @@ enum TerminalText {
         }
 
         return result
-    }
-
-    static func slice(_ text: String, fromColumn offset: Int, width: Int) -> String {
-        guard width > 0 else {
-            return ""
-        }
-
-        let lowerBound = max(offset, 0)
-        let upperBound = lowerBound + width
-        var result = ""
-        var column = 0
-
-        for character in text {
-            let characterWidth = columnWidth(String(character))
-            let nextColumn = column + characterWidth
-
-            if nextColumn <= lowerBound {
-                column = nextColumn
-                continue
-            }
-
-            if column < lowerBound {
-                let fillWidth = min(nextColumn, upperBound) - lowerBound
-                result += String(repeating: " ", count: max(fillWidth, 0))
-                column = nextColumn
-                continue
-            }
-
-            guard nextColumn <= upperBound else {
-                break
-            }
-
-            result.append(character)
-            column = nextColumn
-        }
-
-        return padded(result, toWidth: width)
     }
 
     static func isCharacterBoundary(_ text: String, atColumn column: Int) -> Bool {

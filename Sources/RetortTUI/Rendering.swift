@@ -21,6 +21,106 @@ struct TextFrame: Equatable, Sendable {
     var column: Int
 }
 
+struct RenderedRun: Equatable, Sendable {
+
+    var text: String
+
+    var row: Int
+
+    var column: Int
+
+    init(text: String, row: Int = 0, column: Int = 0) {
+        self.text = text
+        self.row = row
+        self.column = column
+    }
+
+    var width: Int {
+        TerminalText.columnWidth(text)
+    }
+
+    var isEmpty: Bool {
+        text.isEmpty
+    }
+
+    func offsetBy(x: Int, y: Int) -> RenderedRun {
+        RenderedRun(
+            text: text,
+            row: row + y,
+            column: column + x
+        )
+    }
+
+    func clipped(to bounds: RenderedRect) -> [RenderedRun] {
+        guard !bounds.isEmpty,
+              row >= bounds.y,
+              row < bounds.y + bounds.height else {
+            return []
+        }
+
+        return clippedHorizontally(
+            fromColumn: bounds.x,
+            width: bounds.width
+        ).map {
+            RenderedRun(
+                text: $0.text,
+                row: row - bounds.y,
+                column: $0.column - bounds.x
+            )
+        }
+    }
+
+    func clippedHorizontally(fromColumn lowerBound: Int, width: Int) -> [RenderedRun] {
+        guard width > 0 else {
+            return []
+        }
+
+        let lowerBound = max(lowerBound, 0)
+        let upperBound = lowerBound + width
+        var runs: [RenderedRun] = []
+        var text = ""
+        var textStartColumn: Int?
+        var column = column
+
+        func flush() {
+            guard !text.isEmpty, let startColumn = textStartColumn else {
+                return
+            }
+
+            runs.append(
+                RenderedRun(
+                    text: text,
+                    row: row,
+                    column: startColumn
+                )
+            )
+            text = ""
+            textStartColumn = nil
+        }
+
+        for character in self.text {
+            let characterText = String(character)
+            let characterWidth = TerminalText.columnWidth(characterText)
+            let nextColumn = column + characterWidth
+
+            if column >= lowerBound, nextColumn <= upperBound {
+                if textStartColumn == nil {
+                    textStartColumn = column
+                }
+                text.append(character)
+            }
+            else {
+                flush()
+            }
+
+            column = nextColumn
+        }
+
+        flush()
+        return runs
+    }
+}
+
 struct RenderedCursor: Equatable, Sendable {
 
     var row: Int
@@ -144,7 +244,14 @@ struct RenderedFocusRegion: Equatable, Sendable {
 
 struct RenderedBlock: Equatable, Sendable {
 
-    var lines: [String]
+    var runs: [RenderedRun]
+
+    private var minimumWidth: Int
+
+    private var minimumHeight: Int
+
+    // Used only when projecting coordinate-based runs back to legacy lines.
+    var paddedRows: Set<Int>
 
     var cursor: RenderedCursor?
 
@@ -161,11 +268,72 @@ struct RenderedBlock: Equatable, Sendable {
         scrollRegions: [RenderedScrollRegion] = [],
         focusRegions: [RenderedFocusRegion] = []
     ) {
-        self.lines = lines
+        let minimumWidth = lines.map(TerminalText.columnWidth).max() ?? 0
+        self.runs = lines.enumerated().compactMap { row, line in
+            line.isEmpty ? nil : RenderedRun(text: line, row: row)
+        }
+        self.minimumWidth = minimumWidth
+        self.minimumHeight = lines.count
+        self.paddedRows = Set(
+            lines.enumerated().compactMap { row, line in
+                line.isEmpty && minimumWidth > 0 ? row : nil
+            }
+        )
         self.cursor = cursor
         self.hitRegions = hitRegions
         self.scrollRegions = scrollRegions
         self.focusRegions = focusRegions
+    }
+
+    init(
+        runs: [RenderedRun],
+        width: Int? = nil,
+        height: Int? = nil,
+        paddedRows: Set<Int> = [],
+        cursor: RenderedCursor? = nil,
+        hitRegions: [RenderedHitRegion] = [],
+        scrollRegions: [RenderedScrollRegion] = [],
+        focusRegions: [RenderedFocusRegion] = []
+    ) {
+        self.runs = runs.filter { !$0.isEmpty }
+        self.minimumWidth = max(width ?? 0, 0)
+        self.minimumHeight = max(height ?? 0, 0)
+        self.paddedRows = paddedRows
+        self.cursor = cursor
+        self.hitRegions = hitRegions
+        self.scrollRegions = scrollRegions
+        self.focusRegions = focusRegions
+    }
+
+    var lines: [String] {
+        guard height > 0 else {
+            return []
+        }
+
+        var lines = Array(repeating: "", count: height)
+        for run in runs.sorted(by: { lhs, rhs in
+            if lhs.row == rhs.row {
+                return lhs.column < rhs.column
+            }
+            return lhs.row < rhs.row
+        }) {
+            guard lines.indices.contains(run.row) else {
+                continue
+            }
+
+            let currentWidth = TerminalText.columnWidth(lines[run.row])
+            if currentWidth < run.column {
+                lines[run.row] += String(repeating: " ", count: run.column - currentWidth)
+            }
+            lines[run.row] += run.text
+        }
+
+        return lines.enumerated().map { row, line in
+            if !line.isEmpty || paddedRows.contains(row) {
+                return TerminalText.lineProjection(line, paddedToWidth: width)
+            }
+            return line
+        }
     }
 
     var text: String {
@@ -173,11 +341,17 @@ struct RenderedBlock: Equatable, Sendable {
     }
 
     var width: Int {
-        lines.map(TerminalText.columnWidth).max() ?? 0
+        max(
+            minimumWidth,
+            runs.map { $0.column + $0.width }.max() ?? 0
+        )
     }
 
     var height: Int {
-        lines.count
+        max(
+            minimumHeight,
+            runs.map { $0.row + 1 }.max() ?? 0
+        )
     }
 
     var bounds: RenderedRect {
@@ -201,17 +375,16 @@ struct RenderedBlock: Equatable, Sendable {
             containerHeight: targetHeight,
             alignment: alignment.vertical
         )
-        let lines = (0..<targetHeight).map { row in
-            framedLine(
-                at: row,
-                width: targetWidth,
-                x: x,
-                y: y
-            )
-        }
 
         return RenderedBlock(
-            lines: lines,
+            runs: runs.flatMap {
+                $0.offsetBy(x: x, y: y).clipped(
+                    to: RenderedRect(width: targetWidth, height: targetHeight)
+                )
+            },
+            width: targetWidth,
+            height: targetHeight,
+            paddedRows: Set(0..<targetHeight),
             cursor: framedCursor(x: x, y: y, width: targetWidth, height: targetHeight),
             hitRegions: framedHitRegions(x: x, y: y, width: targetWidth, height: targetHeight),
             scrollRegions: framedScrollRegions(x: x, y: y, width: targetWidth, height: targetHeight),
@@ -222,17 +395,14 @@ struct RenderedBlock: Equatable, Sendable {
     func padded(by insets: EdgeInsets) -> RenderedBlock {
         let contentWidth = width
         let targetWidth = contentWidth + insets.horizontal
-        let blankLine = String(repeating: " ", count: targetWidth)
-        let contentLines = lines.map { line in
-            String(repeating: " ", count: insets.leading)
-                + TerminalText.slice(line, fromColumn: 0, width: contentWidth)
-                + String(repeating: " ", count: insets.trailing)
-        }
 
         return RenderedBlock(
-            lines: Array(repeating: blankLine, count: insets.top)
-                + contentLines
-                + Array(repeating: blankLine, count: insets.bottom),
+            runs: runs.map {
+                $0.offsetBy(x: insets.leading, y: insets.top)
+            },
+            width: targetWidth,
+            height: height + insets.vertical,
+            paddedRows: Set(0..<(height + insets.vertical)),
             cursor: cursor.map {
                 RenderedCursor(row: $0.row + insets.top, column: $0.column + insets.leading)
             },
@@ -246,22 +416,6 @@ struct RenderedBlock: Equatable, Sendable {
                 $0.offsetBy(x: insets.leading, y: insets.top)
             }
         )
-    }
-
-    private func framedLine(at row: Int, width targetWidth: Int, x: Int, y: Int) -> String {
-        let sourceRow = row - y
-        guard lines.indices.contains(sourceRow) else {
-            return String(repeating: " ", count: targetWidth)
-        }
-
-        let leadingPadding = max(x, 0)
-        let visibleWidth = max(targetWidth - leadingPadding, 0)
-        return String(repeating: " ", count: leadingPadding)
-            + TerminalText.slice(
-                lines[sourceRow],
-                fromColumn: max(-x, 0),
-                width: visibleWidth
-            )
     }
 
     private func framedCursor(
@@ -711,7 +865,7 @@ enum ViewResolver {
         runtime: StateRuntime?
     ) -> RenderedBlock? {
         if let text = view as? Text {
-            return RenderedBlock(lines: [text.content])
+            return RenderedBlock(runs: [RenderedRun(text: text.content)], height: 1)
         }
 
         if view is EmptyView {
@@ -809,7 +963,7 @@ enum ViewResolver {
         runtime: StateRuntime?
     ) -> RenderedElement? {
         if let text = view as? Text {
-            return .block(RenderedBlock(lines: [text.content]))
+            return .block(RenderedBlock(runs: [RenderedRun(text: text.content)], height: 1))
         }
 
         if view is EmptyView {
@@ -946,8 +1100,13 @@ enum ViewResolver {
             return nil
         }
 
-        let line = String(repeating: " ", count: width)
-        return RenderedBlock(lines: Array(repeating: line, count: max(height, 1)))
+        let renderedHeight = max(height, 1)
+        return RenderedBlock(
+            runs: [],
+            width: width,
+            height: renderedHeight,
+            paddedRows: Set(0..<renderedHeight)
+        )
     }
 }
 
@@ -982,13 +1141,23 @@ enum TextRenderer {
         in viewport: TerminalViewportSize
     ) -> String {
         let frame = frame(for: block, in: viewport)
+        let visibleBounds = RenderedRect(
+            width: viewport.columns - frame.column + 1,
+            height: viewport.rows - frame.row + 1
+        )
         return TerminalControl.clearScreenSequence
-            + block.lines.enumerated().map { offset, line in
-                let availableColumns = viewport.columns - frame.column + 1
-                return TerminalControl.cursorPositionSequence(
-                    row: frame.row + offset,
-                    column: frame.column
-                ) + TerminalText.prefix(line, maxWidth: availableColumns)
+            + block.runs.flatMap { run -> [RenderedRun] in
+                run.clipped(to: visibleBounds)
+            }.sorted { lhs, rhs in
+                if lhs.row == rhs.row {
+                    return lhs.column < rhs.column
+                }
+                return lhs.row < rhs.row
+            }.map { run in
+                TerminalControl.cursorPositionSequence(
+                    row: frame.row + run.row,
+                    column: frame.column + run.column
+                ) + run.text
             }.joined()
             + cursorSequence(for: block, in: frame, viewport: viewport)
     }
@@ -1219,20 +1388,41 @@ enum StackRenderer {
         }
 
         let height = items.compactMap(\.block?.height).max() ?? 1
-        let gap = String(repeating: " ", count: max(spacing, 0))
-        let lines = (0..<height).map { row in
-            items.map { item in
-                switch item.content {
-                case .block(let block):
-                    return line(from: block, at: row, in: height, alignedBy: alignment)
-                case .spacer:
-                    return String(repeating: " ", count: item.width)
-                }
-            }.joined(separator: gap)
+        let width = items.map { $0.x + $0.width }.max() ?? 0
+        let runs = items.flatMap { item -> [RenderedRun] in
+            guard let block = item.block else {
+                return []
+            }
+
+            let y = verticalOffset(
+                contentHeight: block.height,
+                containerHeight: height,
+                alignment: alignment
+            )
+            return block.runs.map {
+                $0.offsetBy(x: item.x, y: y)
+            }
+        }
+        var paddedRows = Set<Int>()
+        for item in items {
+            switch item.content {
+            case .block(let block):
+                let y = verticalOffset(
+                    contentHeight: block.height,
+                    containerHeight: height,
+                    alignment: alignment
+                )
+                paddedRows.formUnion(block.paddedRows.map { $0 + y })
+            case .spacer:
+                paddedRows.formUnion(0..<height)
+            }
         }
 
         return RenderedBlock(
-            lines: lines,
+            runs: runs,
+            width: width,
+            height: height,
+            paddedRows: paddedRows,
             cursor: horizontalCursor(from: items, height: height, alignment: alignment),
             hitRegions: horizontalHitRegions(from: items, height: height, alignment: alignment),
             scrollRegions: horizontalScrollRegions(from: items, height: height, alignment: alignment),
@@ -1252,30 +1442,36 @@ enum StackRenderer {
         }
 
         let width = items.compactMap(\.block?.width).max() ?? 0
-        let gap = Array(repeating: "", count: max(spacing, 0))
-        let lines = items.enumerated().flatMap { index, item in
-            let lines: [String]
+        let height = items.map { $0.y + $0.height }.max() ?? 0
+        let runs = items.flatMap { item -> [RenderedRun] in
+            guard let block = item.block else {
+                return []
+            }
+
+            let x = horizontalOffset(
+                contentWidth: block.width,
+                containerWidth: width,
+                alignment: alignment
+            )
+            return block.runs.map {
+                $0.offsetBy(x: x, y: item.y)
+            }
+        }
+        var paddedRows = Set<Int>()
+        for item in items {
             switch item.content {
             case .block(let block):
-                lines = block.lines.map {
-                    line($0, alignedBy: alignment, in: width)
-                }
+                paddedRows.formUnion(block.paddedRows.map { $0 + item.y })
             case .spacer:
-                lines = Array(
-                    repeating: String(repeating: " ", count: width),
-                    count: item.height
-                )
+                paddedRows.formUnion(item.y..<(item.y + item.height))
             }
-
-            if index == items.indices.last {
-                return lines
-            }
-
-            return lines + gap
         }
 
         return RenderedBlock(
-            lines: lines,
+            runs: runs,
+            width: width,
+            height: height,
+            paddedRows: paddedRows,
             cursor: verticalCursor(from: items, width: width, alignment: alignment),
             hitRegions: verticalHitRegions(from: items, width: width, alignment: alignment),
             scrollRegions: verticalScrollRegions(from: items, width: width, alignment: alignment),
@@ -1740,45 +1936,6 @@ enum StackRenderer {
         max(count - 1, 0) * max(spacing, 0)
     }
 
-    private static func line(
-        from block: RenderedBlock,
-        at row: Int,
-        in height: Int,
-        alignedBy alignment: VerticalAlignment
-    ) -> String {
-        let offset = verticalOffset(
-            contentHeight: block.height,
-            containerHeight: height,
-            alignment: alignment
-        )
-        let contentRange = offset..<(offset + block.height)
-        guard contentRange.contains(row) else {
-            return String(repeating: " ", count: block.width)
-        }
-
-        return block.lines[row - offset].padded(toWidth: block.width)
-    }
-
-    private static func line(
-        _ line: String,
-        alignedBy alignment: HorizontalAlignment,
-        in width: Int
-    ) -> String {
-        let padding = max(width - TerminalText.columnWidth(line), 0)
-        switch alignment {
-        case .leading:
-            return line + String(repeating: " ", count: padding)
-        case .center:
-            let leading = padding / 2
-            let trailing = padding - leading
-            return String(repeating: " ", count: leading)
-                + line
-                + String(repeating: " ", count: trailing)
-        case .trailing:
-            return String(repeating: " ", count: padding) + line
-        }
-    }
-
     private static func horizontalOffset(
         contentWidth: Int,
         containerWidth: Int,
@@ -1881,7 +2038,7 @@ private extension RenderedElement {
     var isRenderable: Bool {
         switch self {
         case .block(let block):
-            return !block.lines.isEmpty
+            return block.width > 0 || block.height > 0
         case .spacer:
             return true
         }
@@ -1910,12 +2067,5 @@ private extension RenderedElement {
         case .spacer(let minLength):
             return minLength
         }
-    }
-}
-
-private extension String {
-
-    func padded(toWidth width: Int) -> String {
-        TerminalText.padded(self, toWidth: width)
     }
 }

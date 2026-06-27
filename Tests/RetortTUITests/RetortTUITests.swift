@@ -626,6 +626,27 @@ import Testing
     #expect(ViewResolver.text(from: stack) == "A B")
 }
 
+@Test func textRunPreservesContentSpaces() {
+    let block = ViewResolver.block(from: Text("A B C"))
+
+    #expect(block?.runs == [RenderedRun(text: "A B C")])
+}
+
+@Test func hStackSpacingUsesRunCoordinatesInsteadOfSpaceRuns() {
+    let block = ViewResolver.block(
+        from: HStack(spacing: 3) {
+            Text("A")
+            Text("B")
+        }
+    )
+
+    #expect(block?.runs == [
+        RenderedRun(text: "A", row: 0, column: 0),
+        RenderedRun(text: "B", row: 0, column: 4),
+    ])
+    #expect(block?.lines == ["A   B"])
+}
+
 @Test func vStackDefaultSpacingPlacesTextOnAdjacentRows() {
     let stack = VStack {
         Text("A")
@@ -642,6 +663,18 @@ import Testing
     }
 
     #expect(ViewResolver.text(from: stack) == "A\n\nB")
+}
+
+@Test func layoutPaddingFrameAndSpacerDoNotCreateSpaceRuns() {
+    let padded = ViewResolver.block(from: Text("A").padding())
+    let framed = ViewResolver.block(from: Text("A").frame(width: 4, height: 3))
+    let spacer = ViewResolver.block(from: Spacer(minLength: 2))
+
+    #expect(padded?.runs == [RenderedRun(text: "A", row: 1, column: 1)])
+    #expect(framed?.runs == [RenderedRun(text: "A", row: 1, column: 1)])
+    #expect(spacer?.runs == [])
+    #expect(spacer?.width == 2)
+    #expect(spacer?.height == 2)
 }
 
 @Test func hStackAlignsChildrenVertically() {
@@ -1845,6 +1878,31 @@ import Testing
     )
 
     #expect(output == "\u{001B}[2J\u{001B}[2;5HA\u{001B}[3;5HB\u{001B}[?25l")
+}
+
+@Test func screenOutputMovesDirectlyBetweenLayoutRuns() {
+    let block = ViewResolver.block(
+        from: HStack(spacing: 3) {
+            Text("A")
+            Text("B")
+        }
+    )!
+    let output = TextRenderer.screen(
+        for: block,
+        in: TerminalViewportSize(columns: 10, rows: 5)
+    )
+
+    #expect(output == "\u{001B}[2J\u{001B}[3;3HA\u{001B}[3;7HB\u{001B}[?25l")
+    #expect(!output.contains(" "))
+}
+
+@Test func screenOutputPreservesContentSpacesInsideRuns() {
+    let output = TextRenderer.screen(
+        for: ViewResolver.block(from: Text("A B"))!,
+        in: TerminalViewportSize(columns: 7, rows: 1)
+    )
+
+    #expect(output == "\u{001B}[2J\u{001B}[1;3HA B\u{001B}[?25l")
 }
 
 @Test func screenOutputShowsAndPositionsRenderedCursor() {

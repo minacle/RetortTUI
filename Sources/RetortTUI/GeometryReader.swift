@@ -131,17 +131,15 @@ extension GeometryReader: GeometryReaderRenderable {
             return RenderedBlock(lines: [])
         }
 
-        let blankLine = String(repeating: " ", count: targetWidth)
-        let lines = (0..<targetHeight).map { row -> String in
-            guard row < block.lines.count else {
-                return blankLine
-            }
-
-            return TerminalText.slice(block.lines[row], fromColumn: 0, width: targetWidth)
-        }
+        let bounds = RenderedRect(width: targetWidth, height: targetHeight)
 
         return RenderedBlock(
-            lines: lines,
+            runs: block.runs.flatMap {
+                $0.clipped(to: bounds)
+            },
+            width: targetWidth,
+            height: targetHeight,
+            paddedRows: Set(0..<targetHeight),
             cursor: frameCursor(block.cursor, width: targetWidth, height: targetHeight),
             hitRegions: frameHitRegions(
                 block.hitRegions,
