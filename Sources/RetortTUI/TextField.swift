@@ -159,10 +159,15 @@ extension TextField {
 
         let text = fieldState?.text ?? text.wrappedValue
         let isFocused = runtime?.isFocused(at: path) == true
-        fieldState?.updateHorizontalScrollOffset(maxWidth: proposal?.columns)
+        if let maxWidth = proposal?.columns {
+            fieldState?.updateHorizontalScrollOffset(maxWidth: maxWidth)
+        }
+        let horizontalScrollOffset = proposal?.columns == nil
+            ? 0
+            : fieldState?.horizontalScrollOffset ?? 0
         let scrollColumn = TerminalText.columnWidth(
             text,
-            upToCharacterOffset: fieldState?.horizontalScrollOffset ?? 0
+            upToCharacterOffset: horizontalScrollOffset
         )
         let content = RenderedBlock(
             runs: [RenderedRun(text: displayText(using: text))],
@@ -312,8 +317,8 @@ final class TextFieldState {
         self.offset = min(max(offset, 0), text.count)
     }
 
-    func updateHorizontalScrollOffset(maxWidth: Int?) {
-        guard let maxWidth, maxWidth > 0 else {
+    func updateHorizontalScrollOffset(maxWidth: Int) {
+        guard maxWidth > 0 else {
             horizontalScrollOffset = 0
             return
         }

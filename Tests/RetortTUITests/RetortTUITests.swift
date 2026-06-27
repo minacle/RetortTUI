@@ -366,6 +366,21 @@ import Testing
     #expect(block?.cursor == RenderedCursor(column: 32))
 }
 
+@Test func flexibleTextFieldWideScrollStabilizesAfterMeasurementRender() {
+    let runtime = StateRuntime()
+    let view = FlexibleLabeledTextFieldView(
+        text: String(repeating: "한글", count: 30)
+    )
+
+    for _ in 0..<3 {
+        _ = runtime.block(from: view, in: RenderProposal(columns: 40, rows: 4))
+        _ = runtime.consumeInvalidation()
+    }
+
+    _ = runtime.block(from: view, in: RenderProposal(columns: 40, rows: 4))
+    #expect(!runtime.consumeInvalidation())
+}
+
 @Test func focusedTextFieldDoesNotInsertVerticalArrowCharacters() {
     let runtime = StateRuntime()
     let view = TextFieldEditingView()
@@ -1070,6 +1085,60 @@ import Testing
     let block = ViewResolver.block(from: stack, in: RenderProposal(columns: 8))
 
     #expect(block?.lines == ["[Name  ]"])
+}
+
+@Test func textFieldTakesRemainingColumnsBeforeSpacer() {
+    let stack = HStack {
+        TextField("Text Field", text: .constant(""))
+        Spacer()
+    }
+
+    let block = ViewResolver.block(from: stack, in: RenderProposal(columns: 20))
+
+    #expect(block?.width == 20)
+    #expect(block?.lines == ["Text Field          "])
+    #expect(block?.focusRegions.map(\.frame) == [
+        RenderedRect(x: 0, y: 0, width: 20, height: 1),
+    ])
+}
+
+@Test func textFieldKeepsFullWidthInsideProposedVStack() {
+    let stack = VStack {
+        HStack {
+            TextField("Text Field", text: .constant(""))
+            Spacer()
+        }
+    }
+
+    let block = ViewResolver.block(from: stack, in: RenderProposal(columns: 20, rows: 5))
+
+    #expect(block?.width == 20)
+    #expect(block?.height == 1)
+    #expect(block?.lines == ["Text Field          "])
+}
+
+@Test func longFixedSiblingDoesNotMoveProposedStackOrigin() {
+    let longText = String(repeating: "가나다라마바사아자차카타파하", count: 4)
+    let stack = VStack {
+        HStack {
+            Text("Settings")
+            Spacer()
+        }
+        HStack(spacing: 1) {
+            Text(" ")
+            TextField("Admin Token", text: .constant(longText))
+            Spacer()
+        }
+        HStack {
+            Text(longText)
+            Spacer()
+        }
+    }
+
+    let block = ViewResolver.block(from: stack, in: RenderProposal(columns: 40, rows: 24))
+
+    #expect(block?.width == 40)
+    #expect(block?.lines.first?.hasPrefix("Settings") == true)
 }
 
 @Test func verticalScrollViewProposesWidthToTextField() {
@@ -2424,6 +2493,74 @@ import Testing
     #expect(
         TerminalControl.input(for: Array("é".utf8))
             == .keyPress(KeyPress(key: "é", characters: "é"))
+    )
+    #expect(
+        TerminalControl.input(for: Array("한".utf8))
+            == .keyPress(KeyPress(key: "한", characters: "한"))
+    )
+}
+
+@Test func terminalReadInputParsesCompleteUTF8FromTimedByteReader() {
+    var bytes = Array("한".utf8)
+    var requestedTimeouts: [TimeInterval?] = []
+
+    let input = TerminalControl.readInput(timeout: 1) { timeout in
+        requestedTimeouts.append(timeout)
+        guard !bytes.isEmpty else {
+            return nil
+        }
+
+        return bytes.removeFirst()
+    }
+
+    #expect(input == .keyPress(KeyPress(key: "한", characters: "한")))
+    #expect(requestedTimeouts == [1, 0.1, 0.1])
+}
+
+@Test func terminalReadInputReturnsNoneForIncompleteUTF8() {
+    var bytes = [Array("한".utf8)[0]]
+    var requestedTimeouts: [TimeInterval?] = []
+
+    let input = TerminalControl.readInput { timeout in
+        requestedTimeouts.append(timeout)
+        guard !bytes.isEmpty else {
+            return nil
+        }
+
+        return bytes.removeFirst()
+    }
+
+    #expect(input == .none)
+    #expect(requestedTimeouts == [nil, 0.1])
+}
+
+@Test func terminalReadInputDoesNotSwallowEscapeAfterIncompleteUTF8() {
+    var escapeBytes = [Array("한".utf8)[0], 27]
+
+    #expect(
+        TerminalControl.readInput {
+            _ in
+
+            guard !escapeBytes.isEmpty else {
+                return nil
+            }
+
+            return escapeBytes.removeFirst()
+        } == .keyPress(KeyPress(key: .escape, characters: "\u{001B}"))
+    )
+
+    var arrowBytes = [Array("한".utf8)[0], 27, 91, 65]
+
+    #expect(
+        TerminalControl.readInput {
+            _ in
+
+            guard !arrowBytes.isEmpty else {
+                return nil
+            }
+
+            return arrowBytes.removeFirst()
+        } == .keyPress(KeyPress(key: .upArrow, characters: "\u{F700}"))
     )
 }
 
@@ -4654,6 +4791,22 @@ private struct DelimitedTextFieldView: View {
                 .focused($isFocused)
                 .frame(width: 32)
             Text("]")
+        }
+    }
+}
+
+private struct FlexibleLabeledTextFieldView: View {
+
+    @State var text: String
+
+    @FocusState var isFocused = true
+
+    var body: some View {
+        HStack(spacing: 1) {
+            Text("Admin Token")
+            TextField("Admin Token", text: $text)
+                .focused($isFocused)
+            Spacer()
         }
     }
 }

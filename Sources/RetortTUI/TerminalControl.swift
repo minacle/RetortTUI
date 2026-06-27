@@ -56,17 +56,38 @@ enum TerminalControl {
     }
 
     static func readInput(timeout: TimeInterval? = nil) -> TerminalInput {
-        guard let firstByte = readByte(timeout: timeout) else {
+        readInput(timeout: timeout, readByte: readByte(timeout:))
+    }
+
+    static func readInput(
+        timeout: TimeInterval? = nil,
+        readByte: (TimeInterval?) -> UInt8?
+    ) -> TerminalInput {
+        guard let firstByte = readByte(timeout) else {
             return .none
         }
 
+        return readInput(startingWith: firstByte, readByte: readByte)
+    }
+
+    private static func readInput(
+        startingWith firstByte: UInt8,
+        readByte: (TimeInterval?) -> UInt8?
+    ) -> TerminalInput {
         var bytes = [firstByte]
 
         if firstByte == 27 {
-            bytes.append(contentsOf: readEscapeSequenceBytes())
+            bytes.append(contentsOf: readEscapeSequenceBytes(readByte: readByte))
         }
         else {
-            bytes.append(contentsOf: readUTF8ContinuationBytes(after: firstByte))
+            switch readUTF8ContinuationBytes(after: firstByte, readByte: readByte) {
+            case .complete(let continuationBytes):
+                bytes.append(contentsOf: continuationBytes)
+            case .incomplete:
+                return .none
+            case .nextInput(let byte):
+                return readInput(startingWith: byte, readByte: readByte)
+            }
         }
 
         return input(for: bytes)
@@ -137,7 +158,10 @@ enum TerminalControl {
         return result > 0
     }
 
-    private static func readUTF8ContinuationBytes(after firstByte: UInt8) -> [UInt8] {
+    private static func readUTF8ContinuationBytes(
+        after firstByte: UInt8,
+        readByte: (TimeInterval?) -> UInt8?
+    ) -> UTF8ContinuationReadResult {
         let count: Int
         switch firstByte {
         case 0b1100_0000...0b1101_1111:
@@ -151,16 +175,31 @@ enum TerminalControl {
         }
 
         guard count > 0 else {
-            return []
+            return .complete([])
         }
 
-        return Array(FileHandle.standardInput.readData(ofLength: count))
+        var bytes: [UInt8] = []
+        for _ in 0..<count {
+            guard let byte = readByte(escapeSequenceByteTimeout) else {
+                return .incomplete
+            }
+
+            guard isUTF8ContinuationByte(byte) else {
+                return .nextInput(byte)
+            }
+
+            bytes.append(byte)
+        }
+
+        return .complete(bytes)
     }
 
-    private static func readEscapeSequenceBytes() -> [UInt8] {
+    private static func readEscapeSequenceBytes(
+        readByte: (TimeInterval?) -> UInt8?
+    ) -> [UInt8] {
         var bytes: [UInt8] = []
         while bytes.count < 64,
-              let byte = readByte(timeout: escapeSequenceByteTimeout) {
+              let byte = readByte(escapeSequenceByteTimeout) {
             bytes.append(byte)
             if escapeSequenceIsComplete([27] + bytes) {
                 break
@@ -168,6 +207,19 @@ enum TerminalControl {
         }
 
         return bytes
+    }
+
+    private static func isUTF8ContinuationByte(_ byte: UInt8) -> Bool {
+        0b1000_0000...0b1011_1111 ~= byte
+    }
+
+    private enum UTF8ContinuationReadResult {
+
+        case complete([UInt8])
+
+        case incomplete
+
+        case nextInput(UInt8)
     }
 
     static func escapeSequenceIsComplete(_ bytes: [UInt8]) -> Bool {

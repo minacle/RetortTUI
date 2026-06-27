@@ -1546,13 +1546,15 @@ enum StackRenderer {
         spacing: Int,
         proposal: RenderProposal? = nil
     ) -> RenderedBlock? {
-        let items = horizontalItems(from: children, spacing: spacing, proposal: proposal)
+        let layout = horizontalLayout(from: children, spacing: spacing, proposal: proposal)
+        let items = layout.items
         guard !items.isEmpty else {
             return nil
         }
 
         let height = items.compactMap(\.block?.height).max() ?? 1
-        let width = items.map { $0.x + $0.width }.max() ?? 0
+        let width = layout.width
+        let bounds = RenderedRect(width: width, height: height)
         let runs = items.flatMap { item -> [RenderedRun] in
             guard let block = item.block else {
                 return []
@@ -1563,8 +1565,9 @@ enum StackRenderer {
                 containerHeight: height,
                 alignment: alignment
             )
-            return block.runs.map {
+            return block.runs.flatMap {
                 $0.offsetBy(x: item.x, y: y)
+                    .clipped(to: bounds)
             }
         }
         var paddedRows = Set<Int>()
@@ -1588,9 +1591,12 @@ enum StackRenderer {
             height: height,
             paddedRows: paddedRows,
             cursor: horizontalCursor(from: items, height: height, alignment: alignment),
-            hitRegions: horizontalHitRegions(from: items, height: height, alignment: alignment),
-            scrollRegions: horizontalScrollRegions(from: items, height: height, alignment: alignment),
+            hitRegions: horizontalHitRegions(from: items, height: height, alignment: alignment)
+                .compactMap { $0.clipped(to: bounds) },
+            scrollRegions: horizontalScrollRegions(from: items, height: height, alignment: alignment)
+                .compactMap { $0.clipped(to: bounds) },
             focusRegions: horizontalFocusRegions(from: items, height: height, alignment: alignment)
+                .compactMap { $0.clipped(to: bounds) }
         )
     }
 
@@ -1600,13 +1606,15 @@ enum StackRenderer {
         spacing: Int,
         proposal: RenderProposal? = nil
     ) -> RenderedBlock? {
-        let items = verticalItems(from: children, spacing: spacing, proposal: proposal)
+        let layout = verticalLayout(from: children, spacing: spacing, proposal: proposal)
+        let items = layout.items
         guard !items.isEmpty else {
             return nil
         }
 
         let width = items.compactMap(\.block?.width).max() ?? 0
-        let height = items.map { $0.y + $0.height }.max() ?? 0
+        let height = layout.height
+        let bounds = RenderedRect(width: width, height: height)
         let runs = items.flatMap { item -> [RenderedRun] in
             guard let block = item.block else {
                 return []
@@ -1617,8 +1625,9 @@ enum StackRenderer {
                 containerWidth: width,
                 alignment: alignment
             )
-            return block.runs.map {
+            return block.runs.flatMap {
                 $0.offsetBy(x: x, y: item.y)
+                    .clipped(to: bounds)
             }
         }
         var paddedRows = Set<Int>()
@@ -1637,10 +1646,27 @@ enum StackRenderer {
             height: height,
             paddedRows: paddedRows,
             cursor: verticalCursor(from: items, width: width, alignment: alignment),
-            hitRegions: verticalHitRegions(from: items, width: width, alignment: alignment),
-            scrollRegions: verticalScrollRegions(from: items, width: width, alignment: alignment),
+            hitRegions: verticalHitRegions(from: items, width: width, alignment: alignment)
+                .compactMap { $0.clipped(to: bounds) },
+            scrollRegions: verticalScrollRegions(from: items, width: width, alignment: alignment)
+                .compactMap { $0.clipped(to: bounds) },
             focusRegions: verticalFocusRegions(from: items, width: width, alignment: alignment)
+                .compactMap { $0.clipped(to: bounds) }
         )
+    }
+
+    private struct HorizontalLayout {
+
+        var items: [HorizontalItem]
+
+        var width: Int
+    }
+
+    private struct VerticalLayout {
+
+        var items: [VerticalItem]
+
+        var height: Int
     }
 
     private struct HorizontalItem {
@@ -1686,27 +1712,35 @@ enum StackRenderer {
         var render: (RenderProposal?, Bool) -> RenderedElement?
     }
 
-    private static func horizontalItems(
+    private static func horizontalLayout(
         from children: [StackChild],
         spacing: Int,
         proposal: RenderProposal?
-    ) -> [HorizontalItem] {
+    ) -> HorizontalLayout {
         let children = measuredChildren(
             from: children,
             proposal: proposal,
             stackAxis: .horizontal,
             childProposal: horizontalChildProposal
         )
-        let flexibleCount = children.horizontalFlexibleCount
+        let usesContentFlex = children.contains { $0.isHorizontallyContentFlexible }
+        let flexibleCount = children.filter {
+            $0.isHorizontallyFlexible(usingContentFlex: usesContentFlex)
+        }.count
         let spacingWidth = spacingWidth(for: children.count, spacing: spacing)
-        let minimums = children.horizontalMinimums
+        let minimums = children.compactMap {
+            $0.horizontalMinimum(usingContentFlex: usesContentFlex)
+        }
         let idealWidth = children.reduce(0) { width, child in
             width + child.content.horizontalLength
         } + spacingWidth
         let targetWidth: Int
-        let fixedWidth = fixedHorizontalWidth(from: children)
+        let fixedWidth = fixedHorizontalWidth(
+            from: children,
+            usingContentFlex: usesContentFlex
+        )
         if flexibleCount > 0, let columns = proposal?.columns {
-            targetWidth = max(columns, fixedWidth + minimums.reduce(0, +) + spacingWidth)
+            targetWidth = max(columns, minimums.reduce(0, +) + spacingWidth)
         }
         else {
             targetWidth = idealWidth
@@ -1715,16 +1749,19 @@ enum StackRenderer {
         let flexibleLengths = flexibleLengths(
             count: flexibleCount,
             minimums: minimums,
-            extra: targetWidth - minimums.reduce(0, +) - fixedWidth - spacingWidth
+            extra: max(
+                targetWidth - minimums.reduce(0, +) - fixedWidth - spacingWidth,
+                0
+            )
         )
         var flexibleIndex = 0
         var x = 0
-        return children.compactMap { child in
+        let items: [HorizontalItem] = children.compactMap { child -> HorizontalItem? in
             let element: RenderedElement
             let itemWidth: Int
             switch child.content {
             case .block(let block):
-                if child.traits.flexibleAxes.contains(.horizontal) {
+                if child.isHorizontallyFlexible(usingContentFlex: usesContentFlex) {
                     let width = flexibleLengths[flexibleIndex]
                     flexibleIndex += 1
                     element = child.render(
@@ -1741,8 +1778,13 @@ enum StackRenderer {
                 }
                 itemWidth = element.horizontalLength
             case .spacer:
-                itemWidth = flexibleLengths[flexibleIndex]
-                flexibleIndex += 1
+                if child.isHorizontallyFlexible(usingContentFlex: usesContentFlex) {
+                    itemWidth = flexibleLengths[flexibleIndex]
+                    flexibleIndex += 1
+                }
+                else {
+                    itemWidth = child.content.horizontalLength
+                }
                 element = child.content
             }
 
@@ -1754,29 +1796,44 @@ enum StackRenderer {
             x += item.width + max(spacing, 0)
             return item
         }
+
+        return HorizontalLayout(
+            items: items,
+            width: flexibleCount > 0 && proposal?.columns != nil
+                ? targetWidth
+                : items.map { $0.x + $0.width }.max() ?? 0
+        )
     }
 
-    private static func verticalItems(
+    private static func verticalLayout(
         from children: [StackChild],
         spacing: Int,
         proposal: RenderProposal?
-    ) -> [VerticalItem] {
+    ) -> VerticalLayout {
         let children = measuredChildren(
             from: children,
             proposal: proposal,
             stackAxis: .vertical,
             childProposal: verticalChildProposal
         )
-        let flexibleCount = children.verticalFlexibleCount
+        let usesContentFlex = children.contains { $0.isVerticallyContentFlexible }
+        let flexibleCount = children.filter {
+            $0.isVerticallyFlexible(usingContentFlex: usesContentFlex)
+        }.count
         let spacingHeight = spacingWidth(for: children.count, spacing: spacing)
-        let minimums = children.verticalMinimums
+        let minimums = children.compactMap {
+            $0.verticalMinimum(usingContentFlex: usesContentFlex)
+        }
         let idealHeight = children.reduce(0) { height, child in
             height + child.content.verticalLength
         } + spacingHeight
         let targetHeight: Int
-        let fixedHeight = fixedVerticalHeight(from: children)
+        let fixedHeight = fixedVerticalHeight(
+            from: children,
+            usingContentFlex: usesContentFlex
+        )
         if flexibleCount > 0, let rows = proposal?.rows {
-            targetHeight = max(rows, fixedHeight + minimums.reduce(0, +) + spacingHeight)
+            targetHeight = max(rows, minimums.reduce(0, +) + spacingHeight)
         }
         else {
             targetHeight = idealHeight
@@ -1785,16 +1842,19 @@ enum StackRenderer {
         let flexibleLengths = flexibleLengths(
             count: flexibleCount,
             minimums: minimums,
-            extra: targetHeight - minimums.reduce(0, +) - fixedHeight - spacingHeight
+            extra: max(
+                targetHeight - minimums.reduce(0, +) - fixedHeight - spacingHeight,
+                0
+            )
         )
         var flexibleIndex = 0
         var y = 0
-        return children.compactMap { child in
+        let items: [VerticalItem] = children.compactMap { child -> VerticalItem? in
             let element: RenderedElement
             let itemHeight: Int
             switch child.content {
             case .block(let block):
-                if child.traits.flexibleAxes.contains(.vertical) {
+                if child.isVerticallyFlexible(usingContentFlex: usesContentFlex) {
                     let height = flexibleLengths[flexibleIndex]
                     flexibleIndex += 1
                     element = child.render(
@@ -1811,8 +1871,13 @@ enum StackRenderer {
                 }
                 itemHeight = element.verticalLength
             case .spacer:
-                itemHeight = flexibleLengths[flexibleIndex]
-                flexibleIndex += 1
+                if child.isVerticallyFlexible(usingContentFlex: usesContentFlex) {
+                    itemHeight = flexibleLengths[flexibleIndex]
+                    flexibleIndex += 1
+                }
+                else {
+                    itemHeight = child.content.verticalLength
+                }
                 element = child.content
             }
 
@@ -1824,6 +1889,13 @@ enum StackRenderer {
             y += item.height + max(spacing, 0)
             return item
         }
+
+        return VerticalLayout(
+            items: items,
+            height: flexibleCount > 0 && proposal?.rows != nil
+                ? targetHeight
+                : items.map { $0.y + $0.height }.max() ?? 0
+        )
     }
 
     private static func measuredChildren(
@@ -1880,30 +1952,42 @@ enum StackRenderer {
         )
     }
 
-    private static func fixedHorizontalWidth(from children: [MeasuredChild]) -> Int {
+    private static func fixedHorizontalWidth(
+        from children: [MeasuredChild],
+        usingContentFlex: Bool
+    ) -> Int {
         children.reduce(0) { width, child in
             switch child.content {
             case .block:
-                if child.traits.flexibleAxes.contains(.horizontal) {
+                if child.isHorizontallyFlexible(usingContentFlex: usingContentFlex) {
                     return width
                 }
                 return width + child.content.horizontalLength
             case .spacer:
-                return width
+                if child.isHorizontallyFlexible(usingContentFlex: usingContentFlex) {
+                    return width
+                }
+                return width + child.content.horizontalLength
             }
         }
     }
 
-    private static func fixedVerticalHeight(from children: [MeasuredChild]) -> Int {
+    private static func fixedVerticalHeight(
+        from children: [MeasuredChild],
+        usingContentFlex: Bool
+    ) -> Int {
         children.reduce(0) { height, child in
             switch child.content {
             case .block:
-                if child.traits.flexibleAxes.contains(.vertical) {
+                if child.isVerticallyFlexible(usingContentFlex: usingContentFlex) {
                     return height
                 }
                 return height + child.content.verticalLength
             case .spacer:
-                return height
+                if child.isVerticallyFlexible(usingContentFlex: usingContentFlex) {
+                    return height
+                }
+                return height + child.content.verticalLength
             }
         }
     }
@@ -2133,59 +2217,54 @@ enum StackRenderer {
     }
 }
 
-private extension Array where Element == RenderedElement {
-
-    var spacerCount: Int {
-        filter(\.isSpacer).count
-    }
-
-    var spacerMinimums: [Int] {
-        compactMap(\.spacerMinimum)
-    }
-}
-
-private extension Array where Element == StackRenderer.MeasuredChild {
-
-    var horizontalFlexibleCount: Int {
-        filter(\.isHorizontallyFlexible).count
-    }
-
-    var verticalFlexibleCount: Int {
-        filter(\.isVerticallyFlexible).count
-    }
-
-    var horizontalMinimums: [Int] {
-        compactMap { child in
-            child.isHorizontallyFlexible ? child.content.spacerMinimum ?? 0 : nil
-        }
-    }
-
-    var verticalMinimums: [Int] {
-        compactMap { child in
-            child.isVerticallyFlexible ? child.content.spacerMinimum ?? 0 : nil
-        }
-    }
-}
-
 private extension StackRenderer.MeasuredChild {
 
-    var isHorizontallyFlexible: Bool {
+    var isHorizontallyContentFlexible: Bool {
+        guard case .block = content else {
+            return false
+        }
+
+        return traits.flexibleAxes.contains(.horizontal)
+    }
+
+    var isVerticallyContentFlexible: Bool {
+        guard case .block = content else {
+            return false
+        }
+
+        return traits.flexibleAxes.contains(.vertical)
+    }
+
+    func isHorizontallyFlexible(usingContentFlex: Bool) -> Bool {
         switch content {
         case .block:
             return traits.flexibleAxes.contains(.horizontal)
         case .spacer:
-            return true
+            return !usingContentFlex
         }
     }
 
-    var isVerticallyFlexible: Bool {
+    func isVerticallyFlexible(usingContentFlex: Bool) -> Bool {
         switch content {
         case .block:
             return traits.flexibleAxes.contains(.vertical)
         case .spacer:
-            return true
+            return !usingContentFlex
         }
     }
+
+    func horizontalMinimum(usingContentFlex: Bool) -> Int? {
+        isHorizontallyFlexible(usingContentFlex: usingContentFlex)
+            ? content.spacerMinimum ?? 0
+            : nil
+    }
+
+    func verticalMinimum(usingContentFlex: Bool) -> Int? {
+        isVerticallyFlexible(usingContentFlex: usingContentFlex)
+            ? content.spacerMinimum ?? 0
+            : nil
+    }
+
 }
 
 private extension RenderedElement {
@@ -2206,14 +2285,6 @@ private extension RenderedElement {
         case .spacer:
             return true
         }
-    }
-
-    var isSpacer: Bool {
-        guard case .spacer = self else {
-            return false
-        }
-
-        return true
     }
 
     var spacerMinimum: Int? {
