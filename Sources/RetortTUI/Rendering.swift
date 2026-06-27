@@ -860,16 +860,15 @@ enum TextLayoutRenderer {
     }
 
     private static func wrappedLines(for text: String, maxWidth: Int?) -> [String] {
-        let paragraphs = text.split(separator: "\n", omittingEmptySubsequences: false)
-        let paragraphLines = paragraphs.isEmpty ? [""] : paragraphs.map(String.init)
+        let paragraphs = UnicodeLineBreak.lineSegments(in: text).map(String.init)
         guard let maxWidth else {
-            return paragraphLines
+            return paragraphs
         }
         guard maxWidth > 0 else {
             return []
         }
 
-        let lines = paragraphLines.flatMap { paragraph in
+        let lines = paragraphs.flatMap { paragraph in
             wrappedParagraph(paragraph, maxWidth: maxWidth)
         }
         return lines.isEmpty ? [""] : lines
@@ -882,50 +881,97 @@ enum TextLayoutRenderer {
 
         var lines: [String] = []
         var start = paragraph.startIndex
+        let opportunities = UnicodeLineBreak.opportunities(in: paragraph)
+        var opportunityIndex = opportunities.startIndex
+
         while start < paragraph.endIndex {
-            var index = start
-            var width = 0
-            var lastWhitespaceBreak: (lineEnd: String.Index, nextStart: String.Index)?
-
-            while index < paragraph.endIndex {
-                let character = paragraph[index]
-                let characterText = String(character)
-                let characterWidth = TerminalText.columnWidth(characterText)
-                guard width + characterWidth <= maxWidth else {
-                    break
-                }
-
-                if character.isWhitespace, index > start {
-                    lastWhitespaceBreak = (
-                        lineEnd: index,
-                        nextStart: paragraph.index(after: index)
-                    )
-                }
-
-                width += characterWidth
-                index = paragraph.index(after: index)
+            while opportunityIndex < opportunities.endIndex,
+                  opportunities[opportunityIndex].index <= start
+            {
+                opportunityIndex = opportunities.index(after: opportunityIndex)
             }
 
-            if index == paragraph.endIndex {
+            if TerminalText.columnWidth(String(paragraph[start..<paragraph.endIndex])) <= maxWidth {
                 lines.append(String(paragraph[start..<paragraph.endIndex]))
                 break
             }
 
-            if let whitespaceBreak = lastWhitespaceBreak {
-                lines.append(String(paragraph[start..<whitespaceBreak.lineEnd]))
-                start = skippingLeadingWhitespace(in: paragraph, from: whitespaceBreak.nextStart)
+            var bestBreak: UnicodeLineBreak.Opportunity?
+            var scanIndex = opportunityIndex
+            while scanIndex < opportunities.endIndex {
+                let opportunity = opportunities[scanIndex]
+                let width = TerminalText.columnWidth(String(paragraph[start..<opportunity.index]))
+                guard width <= maxWidth else {
+                    break
+                }
+
+                bestBreak = opportunity
+                scanIndex = opportunities.index(after: scanIndex)
             }
-            else if index > start {
-                lines.append(String(paragraph[start..<index]))
-                start = index
+
+            if let bestBreak {
+                let lineEnd = trimmingTrailingWhitespace(
+                    in: paragraph,
+                    lowerBound: start,
+                    upperBound: bestBreak.index
+                )
+                lines.append(String(paragraph[start..<lineEnd]))
+                start = skippingLeadingWhitespace(in: paragraph, from: bestBreak.index)
+                opportunityIndex = scanIndex
             }
             else {
-                lines.append("")
-                start = paragraph.index(after: start)
+                let fallbackEnd = fittingCharacterBoundary(
+                    in: paragraph,
+                    from: start,
+                    maxWidth: maxWidth
+                )
+                lines.append(String(paragraph[start..<fallbackEnd]))
+                if fallbackEnd > start {
+                    start = skippingLeadingWhitespace(in: paragraph, from: fallbackEnd)
+                }
+                else {
+                    start = paragraph.index(after: start)
+                }
             }
         }
 
         return lines
+    }
+
+    private static func fittingCharacterBoundary(
+        in text: String,
+        from start: String.Index,
+        maxWidth: Int
+    ) -> String.Index {
+        var index = start
+        var width = 0
+        while index < text.endIndex {
+            let nextIndex = text.index(after: index)
+            let characterWidth = TerminalText.columnWidth(String(text[index]))
+            guard width + characterWidth <= maxWidth else {
+                break
+            }
+
+            width += characterWidth
+            index = nextIndex
+        }
+        return index
+    }
+
+    private static func trimmingTrailingWhitespace(
+        in text: String,
+        lowerBound: String.Index,
+        upperBound: String.Index
+    ) -> String.Index {
+        var index = upperBound
+        while index > lowerBound {
+            let previous = text.index(before: index)
+            guard UnicodeLineBreak.isBreakSpace(text[previous]) else {
+                break
+            }
+            index = previous
+        }
+        return index
     }
 
     private static func skippingLeadingWhitespace(
@@ -933,7 +979,7 @@ enum TextLayoutRenderer {
         from start: String.Index
     ) -> String.Index {
         var index = start
-        while index < text.endIndex, text[index].isWhitespace {
+        while index < text.endIndex, UnicodeLineBreak.isBreakSpace(text[index]) {
             index = text.index(after: index)
         }
         return index

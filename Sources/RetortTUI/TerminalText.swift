@@ -76,6 +76,9 @@ enum TerminalText {
         if value == 0 || value < 32 || (0x7F..<0xA0).contains(value) {
             return 0
         }
+        if isZeroWidthScalar(value) {
+            return 0
+        }
         if isCombiningScalar(value) {
             return 0
         }
@@ -83,6 +86,19 @@ enum TerminalText {
             return 2
         }
         return 1
+    }
+
+    private static func isZeroWidthScalar(_ value: UInt32) -> Bool {
+        switch value {
+        case 0x00AD,
+             0x200B...0x200D,
+             0x2060,
+             0xFE00...0xFE0F,
+             0xE0100...0xE01EF:
+            return true
+        default:
+            return false
+        }
     }
 
     private static func isCombiningScalar(_ value: UInt32) -> Bool {

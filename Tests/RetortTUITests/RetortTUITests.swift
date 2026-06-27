@@ -88,6 +88,57 @@ import Testing
     #expect(block?.lines == ["한글", "AB  "])
 }
 
+@Test func textWrapsCJKWithoutSpacesUsingUnicodeLineBreaks() {
+    let block = ViewResolver.block(
+        from: Text("한국어문장"),
+        in: RenderProposal(columns: 4)
+    )
+
+    #expect(block?.lines == ["한국", "어문", "장  "])
+}
+
+@Test func textDoesNotBreakAroundNoBreakSpace() {
+    let block = ViewResolver.block(
+        from: Text("A\u{00A0}B C"),
+        in: RenderProposal(columns: 3)
+    )
+
+    #expect(block?.lines == ["A\u{00A0}B", "C  "])
+}
+
+@Test func textWrapsAfterZeroWidthSpace() {
+    let block = ViewResolver.block(
+        from: Text("ab\u{200B}cd"),
+        in: RenderProposal(columns: 2)
+    )
+
+    #expect(block?.lines == ["ab\u{200B}", "cd"])
+}
+
+@Test func textKeepsCombiningSequenceTogether() {
+    let block = ViewResolver.block(
+        from: Text("e\u{0301}e"),
+        in: RenderProposal(columns: 1)
+    )
+
+    #expect(block?.lines == ["e\u{0301}", "e"])
+}
+
+@Test func textWrapsExplicitCRLFAndNextLineBreaks() {
+    let block = ViewResolver.block(from: Text("A\r\nB\u{0085}C"))
+
+    #expect(block?.lines == ["A", "B", "C"])
+}
+
+@Test func textWrapsAfterSlash() {
+    let block = ViewResolver.block(
+        from: Text("aa/bb"),
+        in: RenderProposal(columns: 3)
+    )
+
+    #expect(block?.lines == ["aa/", "bb "])
+}
+
 @Test func textFieldDisplaysBoundText() {
     var value = "mayu"
     let textField = TextField(
