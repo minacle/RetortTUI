@@ -836,6 +836,124 @@ extension ForEach: FlattenableViewContent {
     }
 }
 
+enum TextLayoutRenderer {
+
+    static func block(for text: Text, in proposal: RenderProposal?) -> RenderedBlock {
+        let lineLimit = TextLineLimitContext.current
+        var lines = wrappedLines(for: text.content, maxWidth: proposal?.columns)
+        let isTruncated = lineLimit.number.map { lines.count > $0 } ?? false
+
+        if let number = lineLimit.number {
+            lines = Array(lines.prefix(number))
+            if isTruncated, !lines.isEmpty {
+                lines[lines.count - 1] = truncatedLine(
+                    lines[lines.count - 1],
+                    maxWidth: proposal?.columns
+                )
+            }
+            if lineLimit.reservesSpace, lines.count < number {
+                lines.append(contentsOf: Array(repeating: "", count: number - lines.count))
+            }
+        }
+
+        return RenderedBlock(lines: lines)
+    }
+
+    private static func wrappedLines(for text: String, maxWidth: Int?) -> [String] {
+        let paragraphs = text.split(separator: "\n", omittingEmptySubsequences: false)
+        let paragraphLines = paragraphs.isEmpty ? [""] : paragraphs.map(String.init)
+        guard let maxWidth else {
+            return paragraphLines
+        }
+        guard maxWidth > 0 else {
+            return []
+        }
+
+        let lines = paragraphLines.flatMap { paragraph in
+            wrappedParagraph(paragraph, maxWidth: maxWidth)
+        }
+        return lines.isEmpty ? [""] : lines
+    }
+
+    private static func wrappedParagraph(_ paragraph: String, maxWidth: Int) -> [String] {
+        guard !paragraph.isEmpty else {
+            return [""]
+        }
+
+        var lines: [String] = []
+        var start = paragraph.startIndex
+        while start < paragraph.endIndex {
+            var index = start
+            var width = 0
+            var lastWhitespaceBreak: (lineEnd: String.Index, nextStart: String.Index)?
+
+            while index < paragraph.endIndex {
+                let character = paragraph[index]
+                let characterText = String(character)
+                let characterWidth = TerminalText.columnWidth(characterText)
+                guard width + characterWidth <= maxWidth else {
+                    break
+                }
+
+                if character.isWhitespace, index > start {
+                    lastWhitespaceBreak = (
+                        lineEnd: index,
+                        nextStart: paragraph.index(after: index)
+                    )
+                }
+
+                width += characterWidth
+                index = paragraph.index(after: index)
+            }
+
+            if index == paragraph.endIndex {
+                lines.append(String(paragraph[start..<paragraph.endIndex]))
+                break
+            }
+
+            if let whitespaceBreak = lastWhitespaceBreak {
+                lines.append(String(paragraph[start..<whitespaceBreak.lineEnd]))
+                start = skippingLeadingWhitespace(in: paragraph, from: whitespaceBreak.nextStart)
+            }
+            else if index > start {
+                lines.append(String(paragraph[start..<index]))
+                start = index
+            }
+            else {
+                lines.append("")
+                start = paragraph.index(after: start)
+            }
+        }
+
+        return lines
+    }
+
+    private static func skippingLeadingWhitespace(
+        in text: String,
+        from start: String.Index
+    ) -> String.Index {
+        var index = start
+        while index < text.endIndex, text[index].isWhitespace {
+            index = text.index(after: index)
+        }
+        return index
+    }
+
+    private static func truncatedLine(_ line: String, maxWidth: Int?) -> String {
+        guard let maxWidth else {
+            return line + "..."
+        }
+        guard maxWidth > 0 else {
+            return ""
+        }
+        guard maxWidth >= 3 else {
+            return String(repeating: ".", count: maxWidth)
+        }
+
+        return TerminalText.prefix(line, maxWidth: maxWidth - 3) + "..."
+    }
+}
+
 enum ViewResolver {
 
     static func text<Content: View>(from view: Content) -> String? {
@@ -865,7 +983,7 @@ enum ViewResolver {
         runtime: StateRuntime?
     ) -> RenderedBlock? {
         if let text = view as? Text {
-            return RenderedBlock(runs: [RenderedRun(text: text.content)], height: 1)
+            return TextLayoutRenderer.block(for: text, in: proposal)
         }
 
         if view is EmptyView {
@@ -963,7 +1081,7 @@ enum ViewResolver {
         runtime: StateRuntime?
     ) -> RenderedElement? {
         if let text = view as? Text {
-            return .block(RenderedBlock(runs: [RenderedRun(text: text.content)], height: 1))
+            return .block(TextLayoutRenderer.block(for: text, in: proposal))
         }
 
         if view is EmptyView {

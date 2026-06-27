@@ -363,6 +363,9 @@ private struct ScrollDemo: View {
             TextFieldSizingDemo()
                 .frame(width: 44, height: 5, alignment: .topLeading)
 
+            Text("Text wrapping")
+            TextWrappingDemo()
+
             HStack(alignment: .top, spacing: 2) {
                 VStack(alignment: .leading, spacing: 1) {
                     Text("[top]")
@@ -433,6 +436,31 @@ private struct ScrollDemo: View {
             .frame(width: 34, height: 3, alignment: .topLeading)
         }
         .padding(.vertical, 1)
+    }
+}
+
+private struct TextWrappingDemo: View {
+
+    private let sample = "Lorem ipsum dolor sit amet, consectetur adipiscing elit."
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 2) {
+            VStack(alignment: .leading, spacing: 1) {
+                Text(sample)
+                    .lineLimit(2)
+                    .frame(width: 24, alignment: .topLeading)
+                Text(sample)
+                    .lineLimit(4, reservesSpace: true)
+                    .frame(width: 24, alignment: .topLeading)
+            }
+            VStack(alignment: .leading, spacing: 1) {
+                Text(sample)
+                    .lineLimit(1)
+                    .frame(width: 24, alignment: .topLeading)
+                Text(sample)
+                    .frame(width: 24, alignment: .topLeading)
+            }
+        }
     }
 }
 

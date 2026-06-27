@@ -13,6 +13,81 @@ import Testing
     #expect(text.content == "Hello")
 }
 
+@Test func textWrapsToProposedColumns() {
+    let block = ViewResolver.block(
+        from: Text("Lorem ipsum dolor"),
+        in: RenderProposal(columns: 8)
+    )
+
+    #expect(block?.lines == ["Lorem", "ipsum", "dolor"])
+}
+
+@Test func textWrapsExplicitNewlines() {
+    let block = ViewResolver.block(
+        from: Text("Alpha beta\ngamma"),
+        in: RenderProposal(columns: 7)
+    )
+
+    #expect(block?.lines == ["Alpha", "beta ", "gamma"])
+}
+
+@Test func textWrapsLongWordsAtCharacterBoundaries() {
+    let block = ViewResolver.block(
+        from: Text("ABCDEFGHIJ"),
+        in: RenderProposal(columns: 3)
+    )
+
+    #expect(block?.lines == ["ABC", "DEF", "GHI", "J  "])
+}
+
+@Test func textLineLimitTruncatesWithEllipsis() {
+    let block = ViewResolver.block(
+        from: Text("Lorem ipsum dolor").lineLimit(2),
+        in: RenderProposal(columns: 8)
+    )
+
+    #expect(block?.lines == ["Lorem   ", "ipsum..."])
+}
+
+@Test func textLineLimitReservesSpace() {
+    let block = ViewResolver.block(from: Text("Hello").lineLimit(3, reservesSpace: true))
+
+    #expect(block?.height == 3)
+    #expect(block?.lines == ["Hello", "     ", "     "])
+}
+
+@Test func lineLimitAppliesThroughViewTree() {
+    let view = VStack(alignment: .leading) {
+        Text("Alpha beta gamma")
+    }
+    .lineLimit(2)
+
+    let block = ViewResolver.block(from: view, in: RenderProposal(columns: 6))
+
+    #expect(block?.lines == ["Alpha ", "bet..."])
+}
+
+@Test func lineLimitNilRemovesParentLimit() {
+    let view = VStack(alignment: .leading) {
+        Text("Alpha beta gamma")
+            .lineLimit(nil)
+    }
+    .lineLimit(1)
+
+    let block = ViewResolver.block(from: view, in: RenderProposal(columns: 6))
+
+    #expect(block?.lines == ["Alpha", "beta ", "gamma"])
+}
+
+@Test func textWrapsWideCharactersByTerminalColumns() {
+    let block = ViewResolver.block(
+        from: Text("한글AB"),
+        in: RenderProposal(columns: 4)
+    )
+
+    #expect(block?.lines == ["한글", "AB  "])
+}
+
 @Test func textFieldDisplaysBoundText() {
     var value = "mayu"
     let textField = TextField(
@@ -833,6 +908,7 @@ import Testing
 @Test func geometryReaderClipsAndPadsKnownProposedAxes() {
     let reader = GeometryReader { _ in
         Text("ABCDE")
+            .fixedSize(horizontal: true, vertical: false)
     }
 
     let block = ViewResolver.block(
@@ -1682,9 +1758,15 @@ import Testing
 }
 
 @Test func frameAlignmentControlsClippingOrigin() {
-    let center = ViewResolver.block(from: Text("ABCDE").frame(width: 3))
+    let center = ViewResolver.block(
+        from: Text("ABCDE")
+            .fixedSize(horizontal: true, vertical: false)
+            .frame(width: 3)
+    )
     let trailing = ViewResolver.block(
-        from: Text("ABCDE").frame(width: 3, alignment: .trailing)
+        from: Text("ABCDE")
+            .fixedSize(horizontal: true, vertical: false)
+            .frame(width: 3, alignment: .trailing)
     )
 
     #expect(center?.lines == ["BCD"])
