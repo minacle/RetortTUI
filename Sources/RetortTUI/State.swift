@@ -283,7 +283,7 @@ final class StateRuntime {
 
     private let lifecycle = LifecycleRuntime()
 
-    private var textFieldCursors: [[Int]: TextFieldCursor] = [:]
+    private var textFieldStates: [[Int]: TextFieldState] = [:]
 
     private var forEachIdentityStates: [ForEachIdentityKey: ForEachIdentityState] = [:]
 
@@ -529,17 +529,17 @@ final class StateRuntime {
         focus.activePath == path
     }
 
-    func textFieldCursor(at path: [Int], initialOffset: Int) -> TextFieldCursor {
-        if let cursor = textFieldCursors[path] {
+    func textFieldState(at path: [Int], initialText: String) -> TextFieldState {
+        if let cursor = textFieldStates[path] {
             return cursor
         }
 
-        let cursor = TextFieldCursor(initialOffset: initialOffset) {
+        let cursor = TextFieldState(initialText: initialText) {
             [weak self] in
 
             self?.invalidated = true
         }
-        textFieldCursors[path] = cursor
+        textFieldStates[path] = cursor
         return cursor
     }
 
@@ -689,7 +689,7 @@ final class StateRuntime {
         cells = cells.filter {
             !$0.key.path.starts(with: path)
         }
-        textFieldCursors = textFieldCursors.filter {
+        textFieldStates = textFieldStates.filter {
             !$0.key.starts(with: path)
         }
         forEachIdentityStates = forEachIdentityStates.filter {
@@ -1324,19 +1324,36 @@ private final class FocusRuntime {
     func finishRender() -> Bool {
         candidates = pathsInRenderOrder.compactMap { path -> Candidate? in
             guard focusablePaths.contains(path),
-                  !disabledPaths.contains(path),
-                  let attachments = attachmentsByPath[path],
-                  !attachments.isEmpty else {
+                  !disabledPaths.contains(path) else {
                 return nil
             }
 
-            return Candidate(path: path, attachments: attachments)
+            return Candidate(path: path, attachments: attachmentsByPath[path] ?? [])
         }
 
         let previousActivePath = activePath
-        activePath = activePath(for: candidates)
-        let attachmentsChanged = syncAttachments(for: candidates.first { $0.path == activePath })
+        let activeCandidate = activeCandidate(from: candidates)
+        activePath = activeCandidate?.path
+        let attachmentsChanged = syncAttachments(for: activeCandidate)
         return activePath != previousActivePath || attachmentsChanged
+    }
+
+    private func activeCandidate(from candidates: [Candidate]) -> Candidate? {
+        if let request = currentRequest() {
+            return candidates.first { candidate in
+                candidate.attachments.contains {
+                    $0.matches(request)
+                }
+            }
+        }
+
+        guard let activePath,
+              let candidate = candidates.first(where: { $0.path == activePath }),
+              candidate.attachments.isEmpty else {
+            return nil
+        }
+
+        return candidate
     }
 
     func requestFocus(at path: [Int]) -> RequestResult {
@@ -1351,18 +1368,6 @@ private final class FocusRuntime {
             handled: true,
             changed: activePath != previousActivePath || attachmentsChanged
         )
-    }
-
-    private func activePath(for candidates: [Candidate]) -> [Int]? {
-        guard let request = currentRequest() else {
-            return nil
-        }
-
-        return candidates.first { candidate in
-            candidate.attachments.contains {
-                $0.matches(request)
-            }
-        }?.path
     }
 
     private func currentRequest() -> FocusRequest? {

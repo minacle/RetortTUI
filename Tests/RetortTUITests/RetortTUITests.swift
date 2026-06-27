@@ -900,6 +900,143 @@ import Testing
     #expect(block?.lines == ["GHI", "LMN"])
 }
 
+@Test func textFieldFillsRemainingColumnsInHStack() {
+    let stack = HStack {
+        Text("[")
+        TextField("Name", text: .constant(""))
+        Text("]")
+    }
+
+    let block = ViewResolver.block(from: stack, in: RenderProposal(columns: 8))
+
+    #expect(block?.lines == ["[Name  ]"])
+}
+
+@Test func verticalScrollViewProposesWidthToTextField() {
+    let scrollView = ScrollView {
+        TextField("Vertical", text: .constant(""))
+    }
+
+    let block = ViewResolver.block(
+        from: scrollView,
+        in: RenderProposal(columns: 10, rows: 3)
+    )
+
+    #expect(block?.lines == [
+        "Vertical  ",
+        "          ",
+        "          ",
+    ])
+    #expect(block?.focusRegions.map(\.frame) == [
+        RenderedRect(x: 0, y: 0, width: 10, height: 1),
+    ])
+}
+
+@Test func horizontalScrollViewKeepsTextFieldContentIntrinsic() {
+    let scrollView = ScrollView(.horizontal) {
+        TextField("Horizontal", text: .constant(""))
+    }
+
+    let block = ViewResolver.block(
+        from: scrollView,
+        in: RenderProposal(columns: 15)
+    )
+
+    #expect(block?.lines == ["Horizontal     "])
+    #expect(block?.focusRegions.map(\.frame) == [
+        RenderedRect(x: 0, y: 0, width: 10, height: 1),
+    ])
+    #expect(block?.scrollRegions.map(\.frame) == [
+        RenderedRect(x: 0, y: 0, width: 15, height: 1),
+    ])
+}
+
+@Test func textFieldScrollViewCombinationMatchesSwiftUIExpansionShape() {
+    let stack = HStack {
+        ScrollView {
+            TextField("Vertically expanded", text: .constant(""))
+        }
+        ScrollView(.horizontal) {
+            TextField("Horizontally expanded", text: .constant(""))
+        }
+    }
+
+    let block = ViewResolver.block(
+        from: stack,
+        in: RenderProposal(columns: 50, rows: 5)
+    )
+
+    #expect(block?.lines == [
+        "Vertically expanded" + String(repeating: " ", count: 31),
+        String(repeating: " ", count: 50),
+        String(repeating: " ", count: 25) + "Horizontally expanded    ",
+        String(repeating: " ", count: 50),
+        String(repeating: " ", count: 50),
+    ])
+    #expect(block?.focusRegions.map(\.frame) == [
+        RenderedRect(x: 0, y: 0, width: 25, height: 1),
+        RenderedRect(x: 25, y: 2, width: 21, height: 1),
+    ])
+    #expect(block?.scrollRegions.map(\.frame) == [
+        RenderedRect(x: 0, y: 0, width: 25, height: 5),
+        RenderedRect(x: 25, y: 2, width: 25, height: 1),
+    ])
+}
+
+@Test func clickingConstantTextFieldsInsideScrollViewsMovesFocusAndTypes() {
+    let runtime = StateRuntime()
+    let view = ScrollWrappedTextFieldsClickFocusView()
+
+    #expect(
+        runtime.block(
+            from: view,
+            in: RenderProposal(columns: 20, rows: 3)
+        )?.lines == [
+            "Vertical            ",
+            "          Horizontal",
+            "                    ",
+        ]
+    )
+
+    #expect(
+        runtime.dispatch(
+            MouseEvent(button: .left, column: 1, row: 1, phase: .down)
+        ) == .handled
+    )
+    #expect(runtime.consumeInvalidation())
+    #expect(runtime.dispatch(KeyPress(key: "v", characters: "v")) == .handled)
+    #expect(runtime.consumeInvalidation())
+    #expect(
+        runtime.block(
+            from: view,
+            in: RenderProposal(columns: 20, rows: 3)
+        )?.lines == [
+            "v                   ",
+            "          Horizontal",
+            "                    ",
+        ]
+    )
+
+    #expect(
+        runtime.dispatch(
+            MouseEvent(button: .left, column: 11, row: 2, phase: .down)
+        ) == .handled
+    )
+    #expect(runtime.consumeInvalidation())
+    #expect(runtime.dispatch(KeyPress(key: "h", characters: "h")) == .handled)
+    #expect(runtime.consumeInvalidation())
+    #expect(
+        runtime.block(
+            from: view,
+            in: RenderProposal(columns: 20, rows: 3)
+        )?.lines == [
+            "v                   ",
+            "          h         ",
+            "                    ",
+        ]
+    )
+}
+
 @Test func topLevelScrollViewsExpandAlongScrollableAxesOnly() {
     let vertical = ScrollView {
         VStack {
@@ -931,11 +1068,11 @@ import Testing
         in: RenderProposal(columns: 5, rows: 3)
     )
 
-    #expect(verticalBlock?.lines == ["V0", "V1", "V2", "  "])
+    #expect(verticalBlock?.lines == ["V0      ", "V1      ", "V2      ", "        "])
     #expect(horizontalBlock?.lines == ["H0123"])
     #expect(bothBlock?.lines == ["B0123", "B1   ", "     "])
     #expect(verticalBlock?.scrollRegions.map(\.frame) == [
-        RenderedRect(x: 0, y: 0, width: 2, height: 4),
+        RenderedRect(x: 0, y: 0, width: 8, height: 4),
     ])
     #expect(horizontalBlock?.scrollRegions.map(\.frame) == [
         RenderedRect(x: 0, y: 0, width: 5, height: 1),
@@ -977,13 +1114,13 @@ import Testing
 
     #expect(block?.lines == [
         "V0      ",
-        "V1H01234",
+        "V1  H012",
         "V2      ",
         "        ",
     ])
     #expect(block?.scrollRegions.map(\.frame) == [
-        RenderedRect(x: 0, y: 0, width: 2, height: 4),
-        RenderedRect(x: 2, y: 1, width: 6, height: 1),
+        RenderedRect(x: 0, y: 0, width: 4, height: 4),
+        RenderedRect(x: 4, y: 1, width: 4, height: 1),
     ])
 }
 
@@ -1256,6 +1393,31 @@ import Testing
 
     #expect(runtime.consumeInvalidation())
     #expect(runtime.block(from: scrollView)?.lines == ["BCD"])
+}
+
+@Test func horizontalScrollViewWheelRegionUsesFramedViewport() {
+    var position = ScrollPosition()
+    let scrollView = ScrollView(.horizontal) {
+        Text("ABCDE")
+    }
+    .scrollPosition(
+        Binding(
+            get: { position },
+            set: { position = $0 }
+        )
+    )
+    .frame(width: 3, height: 4, alignment: .topLeading)
+    let runtime = StateRuntime()
+
+    #expect(runtime.block(from: scrollView)?.scrollRegions.map(\.frame) == [
+        RenderedRect(x: 0, y: 0, width: 3, height: 4),
+    ])
+
+    dispatchWheel(to: runtime, button: .wheelDown, column: 1, row: 4)
+
+    #expect(position.point == ScrollPoint(x: 1))
+    #expect(runtime.consumeInvalidation())
+    #expect(runtime.block(from: scrollView)?.lines == ["BCD", "   ", "   ", "   "])
 }
 
 @Test func scrollViewWheelSupportsNativeHorizontalAndShiftFallback() {
@@ -3842,6 +4004,20 @@ private struct ScrolledClickFocusView: View {
         }
         .scrollPosition(.constant(ScrollPosition(y: 1)))
         .frame(width: 1, height: 1)
+    }
+}
+
+private struct ScrollWrappedTextFieldsClickFocusView: View {
+
+    var body: some View {
+        HStack(spacing: 0) {
+            ScrollView {
+                TextField("Vertical", text: .constant(""))
+            }
+            ScrollView(.horizontal) {
+                TextField("Horizontal", text: .constant(""))
+            }
+        }
     }
 }
 

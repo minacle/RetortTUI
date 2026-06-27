@@ -276,7 +276,7 @@ private struct InputAndFocusDemo: View {
                 .focusable()
                 .focused(shortcutsFocused)
                 .onKeyPress(phases: .all) { keyPress in
-                    keyStatus = "any key \(keyPress.characters)"
+                    keyStatus = "any key \(keyPress.key.label)"
                     return .ignored
                 }
                 .onKeyPress(.return, phases: [.down]) { keyPress in
@@ -359,6 +359,10 @@ private struct ScrollDemo: View {
             }
             .frame(width: 44, height: 4, alignment: .topLeading)
 
+            Text("TextField sizing")
+            TextFieldSizingDemo()
+                .frame(width: 44, height: 5, alignment: .topLeading)
+
             HStack(alignment: .top, spacing: 2) {
                 VStack(alignment: .leading, spacing: 1) {
                     Text("[top]")
@@ -429,6 +433,22 @@ private struct ScrollDemo: View {
             .frame(width: 34, height: 3, alignment: .topLeading)
         }
         .padding(.vertical, 1)
+    }
+}
+
+private struct TextFieldSizingDemo: View {
+
+    var body: some View {
+        HStack(spacing: 0) {
+            ScrollView(.vertical) {
+                TextField("vertical TextField", text: .constant(""))
+            }
+            FourCellDivider()
+            ScrollView(.horizontal) {
+                TextField("horizontal TextField", text: .constant(""))
+            }
+            FourCellDivider()
+        }
     }
 }
 

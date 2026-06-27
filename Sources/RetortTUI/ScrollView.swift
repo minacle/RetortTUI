@@ -228,7 +228,11 @@ public extension View {
 extension ScrollView: ScrollRenderable, LayoutTraitRenderable {
 
     var layoutTraits: LayoutTraits {
-        LayoutTraits(flexibleAxes: axes)
+        var flexibleAxes = axes
+        if axes.contains(.vertical) {
+            flexibleAxes.insert(.horizontal)
+        }
+        return LayoutTraits(flexibleAxes: flexibleAxes)
     }
 
     func renderedBlock(
@@ -371,7 +375,7 @@ enum ScrollViewRenderer {
         let paddedLines = content.lines.map {
             TerminalText.padded($0, toWidth: content.width)
         }
-        let blankLine = String(repeating: " ", count: content.width)
+        let blankLine = String(repeating: " ", count: width)
 
         let lines = (0..<height).map { row -> String in
             let sourceRow = clampedY + row

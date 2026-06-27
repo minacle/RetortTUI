@@ -1,7 +1,7 @@
 import Foundation
 
 /// A control that displays editable single-line text in the terminal.
-public struct TextField<Label: View>: View, TextFieldRenderable {
+public struct TextField<Label: View>: View, TextFieldRenderable, LayoutTraitRenderable {
 
     public typealias Body = Never
 
@@ -10,6 +10,10 @@ public struct TextField<Label: View>: View, TextFieldRenderable {
     let prompt: Text?
 
     let label: Label
+
+    var layoutTraits: LayoutTraits {
+        LayoutTraits(flexibleAxes: .horizontal)
+    }
 
     public init(
         text: Binding<String>,
@@ -133,11 +137,12 @@ extension TextField {
         runtime: StateRuntime?
     ) -> RenderedBlock? {
         let submitAction = SubmitContext.currentAction
-        let cursor = runtime?.textFieldCursor(
+        let fieldState = runtime?.textFieldState(
             at: path,
-            initialOffset: text.wrappedValue.count
+            initialText: text.wrappedValue
         )
-        cursor?.clamp(in: text.wrappedValue)
+        fieldState?.synchronize(with: text.wrappedValue)
+        fieldState?.clamp()
         runtime?.registerFocusable(true, at: path)
         runtime?.registerKeyPressHandler(
             KeyPressHandler(
@@ -146,22 +151,22 @@ extension TextField {
                     TextFieldInput.matches($0)
                 },
                 action: {
-                    handle($0, cursor: cursor, submitAction: submitAction)
+                    handle($0, state: fieldState, submitAction: submitAction)
                 }
             ),
             at: path
         )
 
-        let text = text.wrappedValue
+        let text = fieldState?.text ?? text.wrappedValue
         let isFocused = runtime?.isFocused(at: path) == true
-        cursor?.updateHorizontalScrollOffset(for: text, maxWidth: proposal?.columns)
+        fieldState?.updateHorizontalScrollOffset(maxWidth: proposal?.columns)
         let scrollColumn = TerminalText.columnWidth(
             text,
-            upToCharacterOffset: cursor?.horizontalScrollOffset ?? 0
+            upToCharacterOffset: fieldState?.horizontalScrollOffset ?? 0
         )
         let content = RenderedBlock(
-            lines: [displayText],
-            cursor: renderedCursor(cursor: cursor, isFocused: isFocused)
+            lines: [displayText(using: text)],
+            cursor: renderedCursor(state: fieldState, isFocused: isFocused)
         )
 
         var block = ScrollViewRenderer.render(
@@ -174,9 +179,9 @@ extension TextField {
         return block
     }
 
-    private var displayText: String {
-        if !text.wrappedValue.isEmpty {
-            return text.wrappedValue
+    private func displayText(using text: String) -> String {
+        if !text.isEmpty {
+            return text
         }
         if let prompt {
             return prompt.content
@@ -186,44 +191,48 @@ extension TextField {
     }
 
     private func renderedCursor(
-        cursor: TextFieldCursor?,
+        state: TextFieldState?,
         isFocused: Bool
     ) -> RenderedCursor? {
-        guard isFocused, let cursor else {
+        guard isFocused, let state else {
             return nil
         }
 
         return RenderedCursor(
             column: TerminalText.columnWidth(
-                text.wrappedValue,
-                upToCharacterOffset: cursor.offset
+                state.text,
+                upToCharacterOffset: state.offset
             )
         )
     }
 
     private func handle(
         _ keyPress: KeyPress,
-        cursor: TextFieldCursor?,
+        state: TextFieldState?,
         submitAction: SubmitAction?
     ) -> KeyPress.Result {
+        guard let state else {
+            return .ignored
+        }
+
         switch keyPress.key {
         case .leftArrow:
-            cursor?.moveLeft()
+            state.moveLeft()
             return .handled
         case .rightArrow:
-            cursor?.moveRight(in: text.wrappedValue)
+            state.moveRight()
             return .handled
         case .home:
-            cursor?.move(to: 0, in: text.wrappedValue)
+            state.move(to: 0)
             return .handled
         case .end:
-            cursor?.move(to: text.wrappedValue.count, in: text.wrappedValue)
+            state.move(to: state.text.count)
             return .handled
         case .delete:
-            cursor?.deleteBackward(in: text)
+            state.deleteBackward(update: text)
             return .handled
         case .deleteForward:
-            cursor?.deleteForward(in: text)
+            state.deleteForward(update: text)
             return .handled
         case .return:
             submitAction?.action()
@@ -233,15 +242,25 @@ extension TextField {
                 return .ignored
             }
 
-            cursor?.insert(keyPress.characters, in: text)
+            state.insert(keyPress.characters, update: text)
             return .handled
         }
     }
 }
 
-final class TextFieldCursor {
+final class TextFieldState {
 
     private let invalidate: () -> Void
+
+    private(set) var text: String {
+        didSet {
+            if text != oldValue {
+                invalidate()
+            }
+        }
+    }
+
+    private var lastObservedBindingText: String
 
     private(set) var offset = 0 {
         didSet {
@@ -259,13 +278,24 @@ final class TextFieldCursor {
         }
     }
 
-    init(initialOffset: Int, invalidate: @escaping () -> Void) {
-        self.offset = max(initialOffset, 0)
+    init(initialText: String, invalidate: @escaping () -> Void) {
+        self.text = initialText
+        self.lastObservedBindingText = initialText
+        self.offset = initialText.count
         self.invalidate = invalidate
     }
 
-    func clamp(in text: String) {
-        move(to: offset, in: text)
+    func synchronize(with bindingText: String) {
+        guard bindingText != lastObservedBindingText else {
+            return
+        }
+
+        text = bindingText
+        lastObservedBindingText = bindingText
+    }
+
+    func clamp() {
+        move(to: offset)
         horizontalScrollOffset = min(horizontalScrollOffset, offset)
     }
 
@@ -273,15 +303,15 @@ final class TextFieldCursor {
         offset = max(offset - 1, 0)
     }
 
-    func moveRight(in text: String) {
-        move(to: offset + 1, in: text)
+    func moveRight() {
+        move(to: offset + 1)
     }
 
-    func move(to offset: Int, in text: String) {
+    func move(to offset: Int) {
         self.offset = min(max(offset, 0), text.count)
     }
 
-    func updateHorizontalScrollOffset(for text: String, maxWidth: Int?) {
+    func updateHorizontalScrollOffset(maxWidth: Int?) {
         guard let maxWidth, maxWidth > 0 else {
             horizontalScrollOffset = 0
             return
@@ -327,26 +357,32 @@ final class TextFieldCursor {
         horizontalScrollOffset = newOffset
     }
 
-    func insert(_ newText: String, in text: Binding<String>) {
-        text.wrappedValue.insert(newText, atCharacterOffset: offset)
+    func insert(_ newText: String, update binding: Binding<String>) {
+        text.insert(newText, atCharacterOffset: offset)
+        binding.wrappedValue = text
+        lastObservedBindingText = binding.wrappedValue
         offset += newText.count
     }
 
-    func deleteBackward(in text: Binding<String>) {
+    func deleteBackward(update binding: Binding<String>) {
         guard offset > 0 else {
             return
         }
 
-        text.wrappedValue.removeCharacter(atOffset: offset - 1)
+        text.removeCharacter(atOffset: offset - 1)
+        binding.wrappedValue = text
+        lastObservedBindingText = binding.wrappedValue
         offset -= 1
     }
 
-    func deleteForward(in text: Binding<String>) {
-        guard offset < text.wrappedValue.count else {
+    func deleteForward(update binding: Binding<String>) {
+        guard offset < text.count else {
             return
         }
 
-        text.wrappedValue.removeCharacter(atOffset: offset)
+        text.removeCharacter(atOffset: offset)
+        binding.wrappedValue = text
+        lastObservedBindingText = binding.wrappedValue
     }
 }
 
