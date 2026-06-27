@@ -40,9 +40,17 @@ struct AppRunner<Application: App> {
             session.stop()
         }
 
-        render(root, using: runtime, termination: termination)
+        var viewportTracker = TerminalViewportTracker(
+            renderedViewport: render(root, using: runtime, termination: termination)
+        )
 
         while true {
+            if viewportTracker.needsRedraw(for: TerminalControl.currentTerminalSize()) {
+                viewportTracker.update(
+                    renderedViewport: render(root, using: runtime, termination: termination)
+                )
+            }
+
             switch TerminalControl.readInput(timeout: inputTimeout(using: runtime)) {
             case .quit:
                 runtime.dispatchTerminate()
@@ -56,8 +64,11 @@ struct AppRunner<Application: App> {
 
             _ = runtime.dispatchExpiredTapActions()
 
-            if runtime.consumeInvalidation() {
-                render(root, using: runtime, termination: termination)
+            if runtime.consumeInvalidation()
+                || viewportTracker.needsRedraw(for: TerminalControl.currentTerminalSize()) {
+                viewportTracker.update(
+                    renderedViewport: render(root, using: runtime, termination: termination)
+                )
             }
 
             if termination.isRequested {
@@ -70,7 +81,7 @@ struct AppRunner<Application: App> {
         _ root: any RootScene,
         using runtime: StateRuntime,
         termination: TerminationController
-    ) {
+    ) -> TerminalViewportSize {
         while true {
             let viewport = TerminalControl.currentTerminalSize()
             guard let block = root.renderedBlock(
@@ -78,7 +89,7 @@ struct AppRunner<Application: App> {
                 using: runtime,
                 termination: termination
             ) else {
-                return
+                return viewport
             }
 
             runtime.updateRenderedFrame(TextRenderer.frame(for: block, in: viewport))
@@ -87,7 +98,7 @@ struct AppRunner<Application: App> {
             }
 
             render(block, in: viewport)
-            return
+            return viewport
         }
     }
 
@@ -99,6 +110,19 @@ struct AppRunner<Application: App> {
         runtime.nextTapDeadline.map {
             max($0.timeIntervalSinceNow, 0)
         }
+    }
+}
+
+struct TerminalViewportTracker {
+
+    private(set) var renderedViewport: TerminalViewportSize
+
+    func needsRedraw(for currentViewport: TerminalViewportSize) -> Bool {
+        currentViewport != renderedViewport
+    }
+
+    mutating func update(renderedViewport: TerminalViewportSize) {
+        self.renderedViewport = renderedViewport
     }
 }
 

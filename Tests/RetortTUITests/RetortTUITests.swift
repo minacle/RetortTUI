@@ -1721,6 +1721,35 @@ import Testing
     #expect(TerminalControl.disableMouseTrackingSequence == "\u{001B}[?1006l\u{001B}[?1000l")
 }
 
+@Test func terminalViewportTrackerIgnoresSameViewport() {
+    let viewport = TerminalViewportSize(columns: 80, rows: 24)
+    let tracker = TerminalViewportTracker(renderedViewport: viewport)
+
+    #expect(!tracker.needsRedraw(for: viewport))
+}
+
+@Test func terminalViewportTrackerRequestsRedrawForChangedViewport() {
+    let tracker = TerminalViewportTracker(
+        renderedViewport: TerminalViewportSize(columns: 80, rows: 24)
+    )
+
+    #expect(tracker.needsRedraw(for: TerminalViewportSize(columns: 100, rows: 24)))
+    #expect(tracker.needsRedraw(for: TerminalViewportSize(columns: 80, rows: 30)))
+}
+
+@Test func terminalViewportTrackerUpdatesRenderedViewport() {
+    var tracker = TerminalViewportTracker(
+        renderedViewport: TerminalViewportSize(columns: 80, rows: 24)
+    )
+    let resizedViewport = TerminalViewportSize(columns: 100, rows: 30)
+
+    #expect(tracker.needsRedraw(for: resizedViewport))
+
+    tracker.update(renderedViewport: resizedViewport)
+
+    #expect(!tracker.needsRedraw(for: resizedViewport))
+}
+
 @Test func controlCQuitsAndOtherInputProducesKeyPresses() {
     #expect(TerminalControl.input(for: 3) == .quit)
     #expect(TerminalControl.input(for: 27) == .keyPress(KeyPress(key: .escape, characters: "\u{001B}")))

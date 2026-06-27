@@ -125,13 +125,16 @@ enum TerminalControl {
     }
 
     private static func waitForInput(timeout: TimeInterval?) -> Bool {
-        guard let timeout else {
-            return true
+        var descriptor = pollfd(fd: STDIN_FILENO, events: Int16(POLLIN), revents: 0)
+        let milliseconds = timeout.map {
+            max(Int32(($0 * 1_000).rounded(.up)), 0)
+        } ?? -1
+        let result = poll(&descriptor, 1, milliseconds)
+        if result < 0, errno == EINTR {
+            return false
         }
 
-        var descriptor = pollfd(fd: STDIN_FILENO, events: Int16(POLLIN), revents: 0)
-        let milliseconds = max(Int32((timeout * 1_000).rounded(.up)), 0)
-        return poll(&descriptor, 1, milliseconds) > 0
+        return result > 0
     }
 
     private static func readUTF8ContinuationBytes(after firstByte: UInt8) -> [UInt8] {
@@ -325,6 +328,8 @@ final class TerminalSession {
 
     private let raw: Termios
 
+    private var previousWindowChangeHandler: (@convention(c) (Int32) -> Void)?
+
     private var isActive = false
 
     init() throws {
@@ -341,6 +346,7 @@ final class TerminalSession {
         }
 
         try raw.apply(to: .standardInput, when: .now)
+        previousWindowChangeHandler = signal(SIGWINCH, handleTerminalWindowChangeSignal)
         TerminalControl.write(TerminalControl.enterAlternateScreenSequence)
         TerminalControl.write(TerminalControl.enableMouseTrackingSequence)
         TerminalControl.write(TerminalControl.hideCursorSequence)
@@ -353,9 +359,16 @@ final class TerminalSession {
         }
 
         try? original.apply(to: .standardInput, when: .now)
+        if let previousWindowChangeHandler {
+            _ = signal(SIGWINCH, previousWindowChangeHandler)
+            self.previousWindowChangeHandler = nil
+        }
         TerminalControl.write(TerminalControl.showCursorSequence)
         TerminalControl.write(TerminalControl.disableMouseTrackingSequence)
         TerminalControl.write(TerminalControl.exitAlternateScreenSequence)
         isActive = false
     }
+}
+
+private func handleTerminalWindowChangeSignal(_: Int32) {
 }
