@@ -29,10 +29,18 @@ struct RenderedRun: Equatable, Sendable {
 
     var column: Int
 
-    init(text: String, row: Int = 0, column: Int = 0) {
+    var style: TextStyle
+
+    init(
+        text: String,
+        row: Int = 0,
+        column: Int = 0,
+        style: TextStyle = .plain
+    ) {
         self.text = text
         self.row = row
         self.column = column
+        self.style = style
     }
 
     var width: Int {
@@ -47,7 +55,8 @@ struct RenderedRun: Equatable, Sendable {
         RenderedRun(
             text: text,
             row: row + y,
-            column: column + x
+            column: column + x,
+            style: style
         )
     }
 
@@ -65,7 +74,8 @@ struct RenderedRun: Equatable, Sendable {
             RenderedRun(
                 text: $0.text,
                 row: row - bounds.y,
-                column: $0.column - bounds.x
+                column: $0.column - bounds.x,
+                style: $0.style
             )
         }
     }
@@ -91,7 +101,8 @@ struct RenderedRun: Equatable, Sendable {
                 RenderedRun(
                     text: text,
                     row: row,
-                    column: startColumn
+                    column: startColumn,
+                    style: style
                 )
             )
             text = ""
@@ -263,6 +274,7 @@ struct RenderedBlock: Equatable, Sendable {
 
     init(
         lines: [String],
+        style: TextStyle = .plain,
         cursor: RenderedCursor? = nil,
         hitRegions: [RenderedHitRegion] = [],
         scrollRegions: [RenderedScrollRegion] = [],
@@ -270,7 +282,7 @@ struct RenderedBlock: Equatable, Sendable {
     ) {
         let minimumWidth = lines.map(TerminalText.columnWidth).max() ?? 0
         self.runs = lines.enumerated().compactMap { row, line in
-            line.isEmpty ? nil : RenderedRun(text: line, row: row)
+            line.isEmpty ? nil : RenderedRun(text: line, row: row, style: style)
         }
         self.minimumWidth = minimumWidth
         self.minimumHeight = lines.count
@@ -856,7 +868,10 @@ enum TextLayoutRenderer {
             }
         }
 
-        return RenderedBlock(lines: lines)
+        return RenderedBlock(
+            lines: lines,
+            style: EnvironmentRenderContext.current.textStyle
+        )
     }
 
     private static func wrappedLines(for text: String, maxWidth: Int?) -> [String] {
@@ -1321,9 +1336,19 @@ enum TextRenderer {
                 TerminalControl.cursorPositionSequence(
                     row: frame.row + run.row,
                     column: frame.column + run.column
-                ) + run.text
+                ) + styledText(for: run)
             }.joined()
             + cursorSequence(for: block, in: frame, viewport: viewport)
+    }
+
+    private static func styledText(for run: RenderedRun) -> String {
+        guard !run.style.isPlain else {
+            return run.text
+        }
+
+        return TerminalControl.sgrSequence(for: run.style)
+            + run.text
+            + TerminalControl.resetSGRSequence
     }
 
     private static func cursorSequence(

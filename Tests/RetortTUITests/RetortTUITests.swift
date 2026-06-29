@@ -13,6 +13,62 @@ import Testing
     #expect(text.content == "Hello")
 }
 
+@Test func textStyleDoesNotChangePlainTextProjection() {
+    let block = ViewResolver.block(
+        from: Text("Lorem ipsum").color(.green).bold(),
+        in: RenderProposal(columns: 5)
+    )
+
+    #expect(block?.lines == ["Lorem", "ipsum"])
+    #expect(block?.text == "Lorem\nipsum")
+}
+
+@Test func textStyleInheritsThroughContainersAndCanBeOverridden() {
+    let block = ViewResolver.block(
+        from: VStack(alignment: .leading) {
+            Text("A")
+            Text("B")
+                .color(.default)
+                .bold(false)
+        }
+        .color(.red)
+        .bold()
+    )
+
+    #expect(block?.runs == [
+        RenderedRun(
+            text: "A",
+            row: 0,
+            style: TextStyle(color: .red, isBold: true)
+        ),
+        RenderedRun(
+            text: "B",
+            row: 1,
+            style: TextStyle(color: .default, isBold: false)
+        ),
+    ])
+    #expect(block?.lines == ["A", "B"])
+}
+
+@Test func textStyleSurvivesPaddingAndFrameLayout() {
+    let block = ViewResolver.block(
+        from: Text("A")
+            .color(.blue)
+            .padding()
+            .frame(width: 4, height: 3, alignment: .topLeading)
+    )
+
+    #expect(block?.runs == [
+        RenderedRun(
+            text: "A",
+            row: 1,
+            column: 1,
+            style: TextStyle(color: .blue, isBold: false)
+        ),
+    ])
+    #expect(block?.lines == ["    ", " A  ", "    "])
+}
+
 @Test func textWrapsToProposedColumns() {
     let block = ViewResolver.block(
         from: Text("Lorem ipsum dolor"),
@@ -154,6 +210,19 @@ import Testing
     )
 
     #expect(ViewResolver.text(from: textField) == "mayu")
+}
+
+@Test func textFieldDisplayTextInheritsTextStyle() {
+    let textField = TextField("Name", text: .constant("mayu"))
+        .color(.brightGreen)
+        .bold()
+
+    #expect(ViewResolver.block(from: textField)?.runs == [
+        RenderedRun(
+            text: "mayu",
+            style: TextStyle(color: .brightGreen, isBold: true)
+        ),
+    ])
 }
 
 @Test func emptyTextFieldDisplaysPromptBeforeTitle() {
@@ -2055,6 +2124,27 @@ import Testing
     #expect(unchangedBlock?.lines == ["Hello"])
 }
 
+@Test func textStyleSurvivesScrollViewClipping() {
+    let scrollView = ScrollView(.horizontal) {
+        Text("ABCDE")
+            .color(.magenta)
+    }
+    .scrollPosition(.constant(ScrollPosition(x: 2)))
+
+    let block = ViewResolver.block(
+        from: scrollView,
+        in: RenderProposal(columns: 3, rows: 1)
+    )
+
+    #expect(block?.runs == [
+        RenderedRun(
+            text: "CDE",
+            style: TextStyle(color: .magenta, isBold: false)
+        ),
+    ])
+    #expect(block?.lines == ["CDE"])
+}
+
 @Test func textFrameCentersInViewport() {
     let frame = TextRenderer.frame(
         for: "Hello",
@@ -2107,6 +2197,57 @@ import Testing
     #expect(output == "\u{001B}[2J\u{001B}[1;3HA B\u{001B}[?25l")
 }
 
+@Test func screenOutputRendersForegroundColorSGR() {
+    let output = TextRenderer.screen(
+        for: ViewResolver.block(from: Text("A").color(.red))!,
+        in: TerminalViewportSize(columns: 1, rows: 1)
+    )
+
+    #expect(output == "\u{001B}[2J\u{001B}[1;1H\u{001B}[31mA\u{001B}[0m\u{001B}[?25l")
+}
+
+@Test func screenOutputRendersBoldSGR() {
+    let output = TextRenderer.screen(
+        for: ViewResolver.block(from: Text("A").bold())!,
+        in: TerminalViewportSize(columns: 1, rows: 1)
+    )
+
+    #expect(output == "\u{001B}[2J\u{001B}[1;1H\u{001B}[1mA\u{001B}[0m\u{001B}[?25l")
+}
+
+@Test func screenOutputRendersCombinedStyleInDeterministicOrder() {
+    let output = TextRenderer.screen(
+        for: ViewResolver.block(from: Text("A").bold().color(.brightCyan))!,
+        in: TerminalViewportSize(columns: 1, rows: 1)
+    )
+
+    #expect(output == "\u{001B}[2J\u{001B}[1;1H\u{001B}[1;96mA\u{001B}[0m\u{001B}[?25l")
+}
+
+@Test func screenOutputRendersDefaultForegroundOverride() {
+    let output = TextRenderer.screen(
+        for: ViewResolver.block(
+            from: VStack(alignment: .leading) {
+                Text("A")
+                Text("B")
+                    .color(.default)
+                    .bold(false)
+            }
+            .color(.red)
+            .bold()
+        )!,
+        in: TerminalViewportSize(columns: 1, rows: 2)
+    )
+
+    #expect(
+        output
+            == "\u{001B}[2J"
+            + "\u{001B}[1;1H\u{001B}[1;31mA\u{001B}[0m"
+            + "\u{001B}[2;1H\u{001B}[39mB\u{001B}[0m"
+            + "\u{001B}[?25l"
+    )
+}
+
 @Test func screenOutputShowsAndPositionsRenderedCursor() {
     let output = TextRenderer.screen(
         for: RenderedBlock(lines: ["Hello"], cursor: RenderedCursor(column: 2)),
@@ -2123,6 +2264,15 @@ import Testing
     )
 
     #expect(output == "\u{001B}[2J\u{001B}[1;1HABC\u{001B}[?25l")
+}
+
+@Test func screenOutputClipsStyledLinesToViewportWidth() {
+    let output = TextRenderer.screen(
+        for: ViewResolver.block(from: Text("ABCDE").color(.blue))!,
+        in: TerminalViewportSize(columns: 3, rows: 1)
+    )
+
+    #expect(output == "\u{001B}[2J\u{001B}[1;1H\u{001B}[34mABC\u{001B}[0m\u{001B}[?25l")
 }
 
 @Test func screenOutputPositionsRenderedCursorAfterWideText() {

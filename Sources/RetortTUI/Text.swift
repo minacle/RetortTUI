@@ -12,6 +12,57 @@ public struct Text: View, Equatable, Sendable {
     }
 }
 
+/// A terminal foreground color.
+public enum TerminalColor: Equatable, Sendable {
+
+    case `default`
+
+    case black
+
+    case red
+
+    case green
+
+    case yellow
+
+    case blue
+
+    case magenta
+
+    case cyan
+
+    case white
+
+    case brightBlack
+
+    case brightRed
+
+    case brightGreen
+
+    case brightYellow
+
+    case brightBlue
+
+    case brightMagenta
+
+    case brightCyan
+
+    case brightWhite
+}
+
+struct TextStyle: Equatable, Sendable {
+
+    var color: TerminalColor?
+
+    var isBold: Bool
+
+    static let plain = TextStyle(color: nil, isBold: false)
+
+    var isPlain: Bool {
+        color == nil && !isBold
+    }
+}
+
 struct TextLineLimit: Equatable, Sendable {
 
     let number: Int?
@@ -66,6 +117,20 @@ struct LineLimitView<Content: View>: View, LayoutModifierRenderable,
 
 public extension View {
 
+    /// Sets the terminal foreground color for text within this view.
+    func color(_ color: TerminalColor) -> some View {
+        transformEnvironment(\.textStyle) {
+            $0.color = color
+        }
+    }
+
+    /// Sets whether text within this view renders in bold.
+    func bold(_ isActive: Bool = true) -> some View {
+        transformEnvironment(\.textStyle) {
+            $0.isBold = isActive
+        }
+    }
+
     /// Limits the number of lines used to render text within this view.
     func lineLimit(_ number: Int?) -> some View {
         lineLimit(number, reservesSpace: false)
@@ -82,6 +147,23 @@ public extension View {
             lineLimit: TextLineLimit(number: number, reservesSpace: reservesSpace)
         )
     }
+}
+
+extension EnvironmentValues {
+
+    var textStyle: TextStyle {
+        get {
+            self[TextStyleKey.self]
+        }
+        set {
+            self[TextStyleKey.self] = newValue
+        }
+    }
+}
+
+private struct TextStyleKey: EnvironmentKey {
+
+    static let defaultValue = TextStyle.plain
 }
 
 enum TextLineLimitContext {

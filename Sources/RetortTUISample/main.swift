@@ -57,7 +57,10 @@ private struct SampleContent: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 1) {
             Text("RetortTUI sample")
+                .color(.brightCyan)
+                .bold()
             Text("Tab/Shift-Tab changes focus | + increments object | Esc clears focus or exits | Ctrl-C exits")
+                .color(.yellow)
 
             HStack(alignment: .top, spacing: 4) {
                 InputAndFocusDemo(

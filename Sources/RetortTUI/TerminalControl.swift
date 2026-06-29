@@ -29,6 +29,8 @@ enum TerminalControl {
 
     static let clearScreenSequence = "\u{001B}[2J"
 
+    static let resetSGRSequence = "\u{001B}[0m"
+
     static let hideCursorSequence = "\u{001B}[?25l"
 
     static let showCursorSequence = "\u{001B}[?25h"
@@ -43,6 +45,61 @@ enum TerminalControl {
 
     static func cursorPositionSequence(row: Int, column: Int) -> String {
         "\u{001B}[\(max(row, 1));\(max(column, 1))H"
+    }
+
+    static func sgrSequence(for style: TextStyle) -> String {
+        var codes: [Int] = []
+        if style.isBold {
+            codes.append(1)
+        }
+        if let color = style.color {
+            codes.append(sgrCode(for: color))
+        }
+
+        guard !codes.isEmpty else {
+            return ""
+        }
+
+        return "\u{001B}[\(codes.map(String.init).joined(separator: ";"))m"
+    }
+
+    private static func sgrCode(for color: TerminalColor) -> Int {
+        switch color {
+        case .default:
+            return 39
+        case .black:
+            return 30
+        case .red:
+            return 31
+        case .green:
+            return 32
+        case .yellow:
+            return 33
+        case .blue:
+            return 34
+        case .magenta:
+            return 35
+        case .cyan:
+            return 36
+        case .white:
+            return 37
+        case .brightBlack:
+            return 90
+        case .brightRed:
+            return 91
+        case .brightGreen:
+            return 92
+        case .brightYellow:
+            return 93
+        case .brightBlue:
+            return 94
+        case .brightMagenta:
+            return 95
+        case .brightCyan:
+            return 96
+        case .brightWhite:
+            return 97
+        }
     }
 
     static func currentTerminalSize() -> TerminalViewportSize {
