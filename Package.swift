@@ -39,7 +39,13 @@ let package = Package(
         ),
         .testTarget(
             name: "RetortTUITests",
-            dependencies: ["RetortTUI"]
+            dependencies: [
+                "RetortTUI",
+                .product(
+                    name: "SwiftTUI",
+                    package: "swift-tui"
+                ),
+            ]
         ),
     ],
     swiftLanguageModes: [.v6]

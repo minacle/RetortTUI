@@ -83,6 +83,8 @@ private struct SampleContent: View {
                 observableCounter: observableCounter
             )
             .environment(\.sampleMarker, "sample")
+
+            RetortListDemo()
         }
         .padding(.horizontal, 1)
         .onKeyPress(.tab) {
@@ -193,6 +195,111 @@ private extension EnvironmentValues {
 private final class SampleObservableCounter: ObservableObject {
 
     @Published var count = 0
+}
+
+private enum RetortListDemoID: Hashable {
+
+    case localDomain
+
+    case runtime
+
+    case port
+
+    case mode
+
+    case reset
+
+    case extra(Int)
+
+    case action
+}
+
+private struct RetortListDemo: View {
+
+    @FocusState private var selection: RetortListDemoID? = .localDomain
+
+    @State private var localDomain = "example.com"
+
+    @State private var port = 443
+
+    @State private var mode = "development"
+
+    @State private var actionStatus = "idle"
+
+    var body: some View {
+        RetortList(selection: $selection) {
+            RetortListItem(id: .localDomain) {
+                Text("Local domain")
+            }
+            .editor(
+                $localDomain,
+                validate: {
+                    guard !$0.isEmpty else {
+                        return .rejected("required")
+                    }
+
+                    return .accepted
+                }
+            )
+            .leadingAccessory {
+                Text("●").color(.green)
+            }
+
+            RetortListItem(id: .runtime, title: "Runtime") {
+                RetortListItem(id: .port) {
+                    Text("Port")
+                }
+                .editor(
+                    $port,
+                    invalidMessage: "enter a valid port"
+                )
+                .leadingAccessory {
+                    Text("●").color(.blue)
+                }
+                RetortListItem(
+                    id: .mode,
+                    title: "Mode"
+                )
+                .choices(
+                    $mode,
+                    from: ["development", "production"],
+                    name: { $0 }
+                )
+            }
+
+            RetortListItem(id: .reset, title: "Reset action status")
+            .subtitle {
+                Text(actionStatus)
+            }
+            .onReset($actionStatus) {
+                $0 = "idle"
+            }
+
+            RetortListItem(id: .extra(0), title: "Custom parsed editor")
+            .editor(
+                $port,
+                text: { "\($0)" },
+                parse: { Int($0) },
+                invalidMessage: "enter a valid number"
+            )
+
+            for index in 1...10 {
+                RetortListItem(id: .extra(index), title: "Scrollable row \(index)")
+                .subtitle {
+                    Text(index.isMultiple(of: 2) ? "even" : "odd")
+                }
+            }
+
+            RetortListItem(id: .action, title: "Run action")
+            .subtitle {
+                Text(actionStatus)
+            }
+            .onActivate($actionStatus) {
+                $0 = "ran"
+            }
+        }
+        .frame(width: 42, height: 7, alignment: .leading)
+    }
 }
 
 private struct InputAndFocusDemo: View {
