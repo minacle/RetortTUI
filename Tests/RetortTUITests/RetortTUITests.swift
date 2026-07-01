@@ -81,10 +81,10 @@ private enum RuntimeChoice: String, CaseIterable {
     let proposal = RenderProposal(columns: 48, rows: 4)
     let block = runtime.block(from: view, in: proposal)
 
-    #expect(block?.lines.first?.hasPrefix("❯   ● Runtime title  subtitle") == true)
+    #expect(block?.lines.first?.hasPrefix("❯ ● Runtime title  subtitle") == true)
     #expect(block?.lines.contains { $0.contains("String title  value") } == true)
     #expect(block?.runs.contains {
-        $0.text == "●" && $0.style == TextStyle(color: .green, isBold: false)
+        $0.text == "●" && $0.style == TextStyle(color: AnyColor(Color16.green), isBold: false)
     } == true)
 }
 
@@ -99,7 +99,7 @@ private enum RuntimeChoice: String, CaseIterable {
         .filter { !$0.isEmpty }
 
     #expect(visibleLines == [
-        "❯   Child",
+        "❯ Child",
         "Action",
         "Resettable",
     ])
@@ -113,6 +113,7 @@ private enum RuntimeChoice: String, CaseIterable {
     var block = runtime.block(from: view, in: proposal)
     #expect(block?.lines.contains { $0.contains("▾ Group") } == true)
     #expect(block?.lines.contains { $0.contains("Child") } == true)
+    #expect(block?.lines.contains { $0.hasPrefix("    Item 0") } == true)
 
     #expect(runtime.dispatch(KeyPress(key: .return, characters: "\n")) == .handled)
     #expect(runtime.consumeInvalidation())
@@ -129,6 +130,50 @@ private enum RuntimeChoice: String, CaseIterable {
     #expect(block?.lines.contains { $0.contains("Child") } == true)
 }
 
+@Test func retortListOmitsDisclosureSpaceWhenSiblingLevelHasNoGroups() {
+    let runtime = StateRuntime()
+    let view = RetortListNestedLeafRuntimeView()
+    let proposal = RenderProposal(columns: 32, rows: 4)
+
+    let block = runtime.block(from: view, in: proposal)
+
+    #expect(block?.lines.first?.hasPrefix("❯ ▾ Group") == true)
+    #expect(block?.lines.contains { $0.hasPrefix("  ● Accessory child") } == true)
+    #expect(block?.lines.contains { $0.hasPrefix("    Plain child") } == true)
+    #expect(block?.lines.contains { $0.hasPrefix("      Plain child") } == false)
+}
+
+@Test func retortListReservesDisclosureSpaceWhenNestedSiblingLevelHasGroups() {
+    let runtime = StateRuntime()
+    let view = RetortListNestedGroupRuntimeView()
+    let proposal = RenderProposal(columns: 40, rows: 6)
+
+    let block = runtime.block(from: view, in: proposal)
+
+    #expect(block?.lines.first?.hasPrefix("❯ ▾ Group") == true)
+    #expect(block?.lines.contains { $0.hasPrefix("    ▾ Disclosure child") } == true)
+    #expect(block?.lines.contains { $0.hasPrefix("    ▾ ● Both child") } == true)
+}
+
+@Test func retortListTextEditorIndentationMatchesNestedRows() {
+    #expect(
+        openedTextEditorCursor(in: RetortListNestedPlainTextEditorRuntimeView())
+            == RenderedCursor(row: 2, column: 8)
+    )
+    #expect(
+        openedTextEditorCursor(in: RetortListNestedAccessoryTextEditorRuntimeView())
+            == RenderedCursor(row: 2, column: 8)
+    )
+    #expect(
+        openedTextEditorCursor(in: RetortListNestedReservedTextEditorRuntimeView())
+            == RenderedCursor(row: 2, column: 10)
+    )
+    #expect(
+        openedTextEditorCursor(in: RetortListNestedReservedAccessoryTextEditorRuntimeView())
+            == RenderedCursor(row: 2, column: 12)
+    )
+}
+
 @Test func retortListKeyboardNavigationMovesRenderedSelection() {
     let runtime = StateRuntime()
     let view = RetortListNavigationRuntimeView()
@@ -138,27 +183,89 @@ private enum RuntimeChoice: String, CaseIterable {
 
     #expect(runtime.dispatch(KeyPress(key: .downArrow, characters: "\u{F701}")) == .handled)
     #expect(runtime.consumeInvalidation())
-    #expect(runtime.block(from: view, in: proposal)?.lines.contains { $0.hasPrefix("❯   Item 1") } == true)
+    #expect(runtime.block(from: view, in: proposal)?.lines.contains { $0.hasPrefix("❯ Item 1") } == true)
 
     #expect(runtime.dispatch(KeyPress(key: .end, characters: "\u{F72B}")) == .handled)
     #expect(runtime.consumeInvalidation())
-    #expect(runtime.block(from: view, in: proposal)?.lines.contains { $0.hasPrefix("❯   Item 7") } == true)
+    #expect(runtime.block(from: view, in: proposal)?.lines.contains { $0.hasPrefix("❯ Item 7") } == true)
 
     #expect(runtime.dispatch(KeyPress(key: .upArrow, characters: "\u{F700}")) == .handled)
     #expect(runtime.consumeInvalidation())
-    #expect(runtime.block(from: view, in: proposal)?.lines.contains { $0.hasPrefix("❯   Item 6") } == true)
+    #expect(runtime.block(from: view, in: proposal)?.lines.contains { $0.hasPrefix("❯ Item 6") } == true)
 
     #expect(runtime.dispatch(KeyPress(key: .home, characters: "\u{F729}")) == .handled)
     #expect(runtime.consumeInvalidation())
-    #expect(runtime.block(from: view, in: proposal)?.lines.contains { $0.hasPrefix("❯   Item 0") } == true)
+    #expect(runtime.block(from: view, in: proposal)?.lines.contains { $0.hasPrefix("❯ Item 0") } == true)
 
     #expect(runtime.dispatch(KeyPress(key: .pageDown, characters: "\u{F72D}")) == .handled)
     #expect(runtime.consumeInvalidation())
-    #expect(runtime.block(from: view, in: proposal)?.lines.contains { $0.hasPrefix("❯   Item 4") } == true)
+    let pageDownBlock = runtime.block(from: view, in: proposal)
+    #expect(pageDownBlock?.lines.first?.hasPrefix("  Item 1") == true)
+    #expect(pageDownBlock?.lines.last?.hasPrefix("❯ Item 4") == true)
 
     #expect(runtime.dispatch(KeyPress(key: .pageUp, characters: "\u{F72C}")) == .handled)
     #expect(runtime.consumeInvalidation())
-    #expect(runtime.block(from: view, in: proposal)?.lines.contains { $0.hasPrefix("❯   Item 0") } == true)
+    let pageUpBlock = runtime.block(from: view, in: proposal)
+    #expect(pageUpBlock?.lines.first?.hasPrefix("❯ Item 0") == true)
+    #expect(pageUpBlock?.lines.last?.hasPrefix("  Item 3") == true)
+}
+
+@Test func retortListPageNavigationMovesByViewportAndClampsAtEnds() {
+    let runtime = StateRuntime()
+    let view = RetortListScrollRuntimeView()
+    let proposal = RenderProposal(columns: 24, rows: 4)
+
+    _ = runtime.block(from: view, in: proposal)
+
+    for expectedLastLine in ["❯ Item 4", "❯ Item 8", "❯ Item 11", "❯ Item 11"] {
+        #expect(runtime.dispatch(KeyPress(key: .pageDown, characters: "\u{F72D}")) == .handled)
+        #expect(runtime.consumeInvalidation())
+        let block = runtime.block(from: view, in: proposal)
+        #expect(block?.lines.last?.hasPrefix(expectedLastLine) == true)
+    }
+
+    for expectedFirstLine in ["❯ Item 7", "❯ Item 3", "❯ Item 0", "❯ Item 0"] {
+        #expect(runtime.dispatch(KeyPress(key: .pageUp, characters: "\u{F72C}")) == .handled)
+        #expect(runtime.consumeInvalidation())
+        let block = runtime.block(from: view, in: proposal)
+        #expect(block?.lines.first?.hasPrefix(expectedFirstLine) == true)
+    }
+}
+
+@Test func retortListPageNavigationJumpsAcrossThreeRows() {
+    let runtime = StateRuntime()
+    let view = RetortListThreeRowRuntimeView()
+    let proposal = RenderProposal(columns: 24, rows: 2)
+
+    _ = runtime.block(from: view, in: proposal)
+
+    #expect(runtime.dispatch(KeyPress(key: .pageDown, characters: "\u{F72D}")) == .handled)
+    #expect(runtime.consumeInvalidation())
+    let pageDownBlock = runtime.block(from: view, in: proposal)
+    #expect(pageDownBlock?.lines.last?.hasPrefix("❯ Item 2") == true)
+
+    #expect(runtime.dispatch(KeyPress(key: .pageUp, characters: "\u{F72C}")) == .handled)
+    #expect(runtime.consumeInvalidation())
+    let pageUpBlock = runtime.block(from: view, in: proposal)
+    #expect(pageUpBlock?.lines.first?.hasPrefix("❯ Item 0") == true)
+}
+
+@Test func retortListPageNavigationUsesNaturalHeightWhenUnframed() {
+    let runtime = StateRuntime()
+    let view = RetortListUnframedThreeRowRuntimeView()
+    let proposal = RenderProposal(columns: 24)
+
+    _ = runtime.block(from: view, in: proposal)
+
+    #expect(runtime.dispatch(KeyPress(key: .pageDown, characters: "\u{F72D}")) == .handled)
+    #expect(runtime.consumeInvalidation())
+    let pageDownBlock = runtime.block(from: view, in: proposal)
+    #expect(pageDownBlock?.lines.last?.hasPrefix("❯ Item 2") == true)
+
+    #expect(runtime.dispatch(KeyPress(key: .pageUp, characters: "\u{F72C}")) == .handled)
+    #expect(runtime.consumeInvalidation())
+    let pageUpBlock = runtime.block(from: view, in: proposal)
+    #expect(pageUpBlock?.lines.first?.hasPrefix("❯ Item 0") == true)
 }
 
 @Test func retortListTextEditorShowsRealCursorAndEditsAfterReturn() {
@@ -175,6 +282,9 @@ private enum RuntimeChoice: String, CaseIterable {
 
     let editorBlock = runtime.block(from: view, in: proposal)
     #expect(editorBlock?.cursor != nil)
+    #expect(editorBlock?.runs.contains {
+        $0.text == "Editor" && $0.style.isBold
+    } == true)
 
     #expect(runtime.dispatch(KeyPress(key: "a", characters: "a")) == .handled)
     #expect(runtime.consumeInvalidation())
@@ -193,7 +303,7 @@ private enum RuntimeChoice: String, CaseIterable {
     #expect(runtime.consumeInvalidation())
 
     let movedBlock = runtime.block(from: view, in: proposal)
-    #expect(movedBlock?.lines.contains { $0.hasPrefix("❯   Item 0") } == true)
+    #expect(movedBlock?.lines.contains { $0.hasPrefix("❯ Item 0") } == true)
 }
 
 @Test func retortListTextEditorReturnsFocusToRowAfterEscape() {
@@ -217,7 +327,7 @@ private enum RuntimeChoice: String, CaseIterable {
     #expect(runtime.consumeInvalidation())
 
     let movedBlock = runtime.block(from: view, in: proposal)
-    #expect(movedBlock?.lines.contains { $0.hasPrefix("❯   Item 0") } == true)
+    #expect(movedBlock?.lines.contains { $0.hasPrefix("❯ Item 0") } == true)
 }
 
 @Test func retortListTextEditorEscapeAfterRejectedCommitKeepsOriginalValue() {
@@ -404,6 +514,71 @@ private enum RuntimeChoice: String, CaseIterable {
     #expect(rejectedBlock?.lines.first?.contains("development") == true)
 }
 
+@Test func retortListChoiceEditorPageNavigationUsesViewportRows() {
+    let runtime = StateRuntime()
+    let view = RetortListLongChoiceEditorRuntimeView()
+    let proposal = RenderProposal(columns: 40, rows: 4)
+
+    _ = runtime.block(from: view, in: proposal)
+    #expect(runtime.dispatch(KeyPress(key: .return, characters: "\n")) == .handled)
+    #expect(runtime.consumeInvalidation())
+    _ = runtime.block(from: view, in: proposal)
+
+    #expect(runtime.dispatch(KeyPress(key: .pageDown, characters: "\u{F72D}")) == .handled)
+    #expect(runtime.consumeInvalidation())
+    let pageDownBlock = runtime.block(from: view, in: proposal)
+    #expect(pageDownBlock?.lines.first?.contains("Option 1") == true)
+    #expect(pageDownBlock?.lines.last?.contains("❯ Option 4") == true)
+
+    #expect(runtime.dispatch(KeyPress(key: .pageUp, characters: "\u{F72C}")) == .handled)
+    #expect(runtime.consumeInvalidation())
+    let pageUpBlock = runtime.block(from: view, in: proposal)
+    #expect(pageUpBlock?.lines.first?.contains("❯ Option 0") == true)
+    #expect(pageUpBlock?.lines.last?.contains("Option 3") == true)
+}
+
+@Test func retortListChoiceEditorPageNavigationJumpsAcrossThreeItems() {
+    let runtime = StateRuntime()
+    let view = RetortListThreeChoiceEditorRuntimeView()
+    let proposal = RenderProposal(columns: 40, rows: 2)
+
+    _ = runtime.block(from: view, in: proposal)
+    #expect(runtime.dispatch(KeyPress(key: .return, characters: "\n")) == .handled)
+    #expect(runtime.consumeInvalidation())
+    _ = runtime.block(from: view, in: proposal)
+
+    #expect(runtime.dispatch(KeyPress(key: .pageDown, characters: "\u{F72D}")) == .handled)
+    #expect(runtime.consumeInvalidation())
+    let pageDownBlock = runtime.block(from: view, in: proposal)
+    #expect(pageDownBlock?.lines.last?.contains("❯ Option 2") == true)
+
+    #expect(runtime.dispatch(KeyPress(key: .pageUp, characters: "\u{F72C}")) == .handled)
+    #expect(runtime.consumeInvalidation())
+    let pageUpBlock = runtime.block(from: view, in: proposal)
+    #expect(pageUpBlock?.lines.first?.contains("❯ Option 0") == true)
+}
+
+@Test func retortListChoiceEditorPageNavigationUsesNaturalHeightWhenUnframed() {
+    let runtime = StateRuntime()
+    let view = RetortListUnframedThreeChoiceEditorRuntimeView()
+    let proposal = RenderProposal(columns: 40)
+
+    _ = runtime.block(from: view, in: proposal)
+    #expect(runtime.dispatch(KeyPress(key: .return, characters: "\n")) == .handled)
+    #expect(runtime.consumeInvalidation())
+    _ = runtime.block(from: view, in: proposal)
+
+    #expect(runtime.dispatch(KeyPress(key: .pageDown, characters: "\u{F72D}")) == .handled)
+    #expect(runtime.consumeInvalidation())
+    let pageDownBlock = runtime.block(from: view, in: proposal)
+    #expect(pageDownBlock?.lines.last?.contains("❯ Option 2") == true)
+
+    #expect(runtime.dispatch(KeyPress(key: .pageUp, characters: "\u{F72C}")) == .handled)
+    #expect(runtime.consumeInvalidation())
+    let pageUpBlock = runtime.block(from: view, in: proposal)
+    #expect(pageUpBlock?.lines.contains { $0.contains("❯ Option 0") } == true)
+}
+
 @Test func retortListKeepsKeyboardSelectionVisibleInsideOwnScrollView() {
     let runtime = StateRuntime()
     let view = RetortListScrollRuntimeView()
@@ -421,6 +596,22 @@ private enum RuntimeChoice: String, CaseIterable {
 
     let block = runtime.block(from: view, in: proposal)
     #expect(block?.lines.contains { $0.contains("Item 6") } == true)
+}
+
+private func openedTextEditorCursor<Content: View>(
+    in view: Content
+) -> RenderedCursor? {
+    let runtime = StateRuntime()
+    let proposal = RenderProposal(columns: 40, rows: 6)
+
+    _ = runtime.block(from: view, in: proposal)
+    _ = runtime.consumeInvalidation()
+    _ = runtime.block(from: view, in: proposal)
+
+    #expect(runtime.dispatch(KeyPress(key: .return, characters: "\n")) == .handled)
+    _ = runtime.consumeInvalidation()
+
+    return runtime.block(from: view, in: proposal)?.cursor
 }
 
 @Test func retortListBindingActionMutatesParentState() {
@@ -527,6 +718,136 @@ private struct RetortListTreeRuntimeView: View {
     }
 }
 
+private struct RetortListNestedLeafRuntimeView: View {
+
+    @FocusState
+    private var selection: RuntimeListID? = .group
+
+    var body: some View {
+        RetortList(selection: $selection) {
+            RetortListItem(id: .group, title: "Group") {
+                RetortListItem(id: .child, title: "Accessory child")
+                    .leadingAccessory {
+                        Text("●").color(.green)
+                    }
+                RetortListItem(id: .item(0), title: "Plain child")
+            }
+        }
+        .frame(width: 40, height: 5, alignment: .leading)
+    }
+}
+
+private struct RetortListNestedGroupRuntimeView: View {
+
+    @FocusState
+    private var selection: RuntimeListID? = .group
+
+    var body: some View {
+        RetortList(selection: $selection) {
+            RetortListItem(id: .group, title: "Group") {
+                RetortListItem(id: .item(10), title: "Disclosure child") {
+                    RetortListItem(id: .item(11), title: "Grandchild")
+                }
+                RetortListItem(id: .item(12), title: "Both child") {
+                    RetortListItem(id: .item(13), title: "Both grandchild")
+                }
+                .leadingAccessory {
+                    Text("●").color(.green)
+                }
+            }
+        }
+        .frame(width: 40, height: 6, alignment: .leading)
+    }
+}
+
+private struct RetortListNestedPlainTextEditorRuntimeView: View {
+
+    @FocusState
+    private var selection: RuntimeListID? = .item(20)
+
+    @State
+    private var value = ""
+
+    var body: some View {
+        RetortList(selection: $selection) {
+            RetortListItem(id: .group, title: "Group") {
+                RetortListItem(id: .item(20), title: "Plain editor")
+                    .editor($value)
+            }
+        }
+        .frame(width: 40, height: 6, alignment: .leading)
+    }
+}
+
+private struct RetortListNestedAccessoryTextEditorRuntimeView: View {
+
+    @FocusState
+    private var selection: RuntimeListID? = .item(21)
+
+    @State
+    private var value = ""
+
+    var body: some View {
+        RetortList(selection: $selection) {
+            RetortListItem(id: .group, title: "Group") {
+                RetortListItem(id: .item(21), title: "Accessory editor")
+                    .leadingAccessory {
+                        Text("●").color(.green)
+                    }
+                    .editor($value)
+            }
+        }
+        .frame(width: 40, height: 6, alignment: .leading)
+    }
+}
+
+private struct RetortListNestedReservedTextEditorRuntimeView: View {
+
+    @FocusState
+    private var selection: RuntimeListID? = .item(22)
+
+    @State
+    private var value = ""
+
+    var body: some View {
+        RetortList(selection: $selection) {
+            RetortListItem(id: .group, title: "Group") {
+                RetortListItem(id: .item(22), title: "Reserved editor")
+                    .editor($value)
+                RetortListItem(id: .item(23), title: "Disclosure sibling") {
+                    RetortListItem(id: .item(24), title: "Grandchild")
+                }
+            }
+        }
+        .frame(width: 40, height: 6, alignment: .leading)
+    }
+}
+
+private struct RetortListNestedReservedAccessoryTextEditorRuntimeView: View {
+
+    @FocusState
+    private var selection: RuntimeListID? = .item(25)
+
+    @State
+    private var value = ""
+
+    var body: some View {
+        RetortList(selection: $selection) {
+            RetortListItem(id: .group, title: "Group") {
+                RetortListItem(id: .item(25), title: "Reserved accessory editor")
+                    .leadingAccessory {
+                        Text("●").color(.green)
+                    }
+                    .editor($value)
+                RetortListItem(id: .item(26), title: "Disclosure sibling") {
+                    RetortListItem(id: .item(27), title: "Grandchild")
+                }
+            }
+        }
+        .frame(width: 40, height: 6, alignment: .leading)
+    }
+}
+
 private struct RetortListNavigationRuntimeView: View {
 
     @FocusState
@@ -539,6 +860,35 @@ private struct RetortListNavigationRuntimeView: View {
             }
         }
         .frame(width: 32, height: 4, alignment: .leading)
+    }
+}
+
+private struct RetortListThreeRowRuntimeView: View {
+
+    @FocusState
+    private var selection: RuntimeListID? = .item(0)
+
+    var body: some View {
+        RetortList(selection: $selection) {
+            for index in 0..<3 {
+                RetortListItem(id: .item(index), title: "Item \(index)")
+            }
+        }
+        .frame(width: 24, height: 2, alignment: .leading)
+    }
+}
+
+private struct RetortListUnframedThreeRowRuntimeView: View {
+
+    @FocusState
+    private var selection: RuntimeListID? = .item(0)
+
+    var body: some View {
+        RetortList(selection: $selection) {
+            for index in 0..<3 {
+                RetortListItem(id: .item(index), title: "Item \(index)")
+            }
+        }
     }
 }
 
@@ -688,6 +1038,77 @@ private struct RetortListChoiceEditorRuntimeView: View {
             )
         }
         .frame(width: 40, height: 5, alignment: .leading)
+    }
+}
+
+private struct RetortListLongChoiceEditorRuntimeView: View {
+
+    @FocusState
+    private var selection: RuntimeListID? = .choice
+
+    @State
+    private var value = 0
+
+    var body: some View {
+        RetortList(selection: $selection) {
+            RetortListItem(
+                id: .choice,
+                title: "Choice"
+            )
+            .choices(
+                $value,
+                from: Array(0..<8),
+                name: { "Option \($0)" }
+            )
+        }
+        .frame(width: 40, height: 4, alignment: .leading)
+    }
+}
+
+private struct RetortListThreeChoiceEditorRuntimeView: View {
+
+    @FocusState
+    private var selection: RuntimeListID? = .choice
+
+    @State
+    private var value = 0
+
+    var body: some View {
+        RetortList(selection: $selection) {
+            RetortListItem(
+                id: .choice,
+                title: "Choice"
+            )
+            .choices(
+                $value,
+                from: Array(0..<3),
+                name: { "Option \($0)" }
+            )
+        }
+        .frame(width: 40, height: 2, alignment: .leading)
+    }
+}
+
+private struct RetortListUnframedThreeChoiceEditorRuntimeView: View {
+
+    @FocusState
+    private var selection: RuntimeListID? = .choice
+
+    @State
+    private var value = 0
+
+    var body: some View {
+        RetortList(selection: $selection) {
+            RetortListItem(
+                id: .choice,
+                title: "Choice"
+            )
+            .choices(
+                $value,
+                from: Array(0..<3),
+                name: { "Option \($0)" }
+            )
+        }
     }
 }
 

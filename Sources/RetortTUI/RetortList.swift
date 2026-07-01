@@ -289,7 +289,7 @@ public struct RetortList<ID>: View where ID: Hashable {
             RetortListStorage(
                 items: items,
                 selection: selection,
-                viewportRows: max(proxy.rows, 1)
+                viewportRows: proxy.rows
             )
         }
     }
@@ -372,24 +372,37 @@ private struct RetortListStorage<ID>: View where ID: Hashable {
 
     @ViewBuilder
     private func rowView(_ row: RetortListRow<ID>) -> some View {
-        let isSelected = selection.wrappedValue == row.id && activeEditor?.id != row.id
+        let isEditing = activeEditor?.id == row.id
+        let isSelected = selection.wrappedValue == row.id && !isEditing
+        let isHighlighted = selection.wrappedValue == row.id || isEditing
+        let leadingAccessory = row.item.configuration.leadingAccessory
+        let subtitle = row.item.configuration.subtitle
 
-        HStack(spacing: 0) {
+        RetortListRowLayout(
+            depth: row.depth,
+            isGroup: row.isGroup,
+            reservesDisclosureSpace: row.reservesDisclosureSpace,
+            hasLeadingAccessory: leadingAccessory != nil,
+            hasSubtitle: subtitle != nil
+        ) {
             Text(rowCursor(isSelected: isSelected))
                 .bold(isSelected)
-            Text(row.prefix)
-            if let leadingAccessory = row.item.configuration.leadingAccessory {
-                leadingAccessory
-                Text(" ")
+            Text(row.disclosureMarker)
+            if let leadingAccessory {
+                HStack(spacing: 0) {
+                    leadingAccessory
+                    Text(" ")
+                }
             }
             row.item.configuration.title
-                .bold(selection.wrappedValue == row.id)
-            if let subtitle = row.item.configuration.subtitle {
-                Text("  ")
-                subtitle
-                    .color(.brightBlack)
+                .bold(isHighlighted)
+            if let subtitle {
+                HStack(spacing: 0) {
+                    Text("  ")
+                    subtitle
+                        .color(.brightBlack)
+                }
             }
-            Spacer()
         }
         .focusable(!isTextEditorActive(for: row))
         .focused(selection, equals: row.id)
@@ -400,9 +413,22 @@ private struct RetortListStorage<ID>: View where ID: Hashable {
 
     @ViewBuilder
     private func textEditorView(_ row: RetortListRow<ID>) -> some View {
-        HStack(spacing: 0) {
-            Text(editorCursorPrefix(for: row, isSelected: true))
+        let leadingAccessory = row.item.configuration.leadingAccessory
+
+        RetortListEditorLineLayout(
+            depth: row.depth,
+            isGroup: row.isGroup,
+            reservesDisclosureSpace: row.reservesDisclosureSpace,
+            hasLeadingAccessory: leadingAccessory != nil
+        ) {
+            Text(rowCursor(isSelected: true))
                 .bold()
+            if let leadingAccessory {
+                HStack(spacing: 0) {
+                    leadingAccessory
+                    Text(" ")
+                }
+            }
             TextField(
                 "",
                 text: $editorDraft
@@ -412,15 +438,24 @@ private struct RetortListStorage<ID>: View where ID: Hashable {
                 commitActiveEditor(for: row.item)
                 scrollSelectionIntoView()
             }
-            Spacer()
         }
 
         if let errorMessage = activeEditor?.errorMessage {
-            HStack(spacing: 0) {
-                Text(editorCursorPrefix(for: row, isSelected: false))
+            RetortListEditorLineLayout(
+                depth: row.depth,
+                isGroup: row.isGroup,
+                reservesDisclosureSpace: row.reservesDisclosureSpace,
+                hasLeadingAccessory: leadingAccessory != nil
+            ) {
+                Text(rowCursor(isSelected: false))
+                if let leadingAccessory {
+                    HStack(spacing: 0) {
+                        leadingAccessory
+                        Text(" ")
+                    }
+                }
                 Text("Error: \(errorMessage)")
                     .color(.red)
-                Spacer()
             }
         }
     }
@@ -435,12 +470,24 @@ private struct RetortListStorage<ID>: View where ID: Hashable {
 
             let isSelected = index == activeEditor?.selectedChoiceIndex
 
-            HStack(spacing: 0) {
-                Text(editorCursorPrefix(for: row, isSelected: isSelected))
+            let leadingAccessory = row.item.configuration.leadingAccessory
+
+            RetortListEditorLineLayout(
+                depth: row.depth,
+                isGroup: row.isGroup,
+                reservesDisclosureSpace: row.reservesDisclosureSpace,
+                hasLeadingAccessory: leadingAccessory != nil
+            ) {
+                Text(rowCursor(isSelected: isSelected))
                     .bold(isSelected)
+                if let leadingAccessory {
+                    HStack(spacing: 0) {
+                        leadingAccessory
+                        Text(" ")
+                    }
+                }
                 Text(choices[index])
                     .bold(isSelected)
-                Spacer()
             }
             .onTapGesture {
                 activeEditor?.selectedChoiceIndex = index
@@ -464,11 +511,15 @@ private struct RetortListStorage<ID>: View where ID: Hashable {
             return .ignored
         }
 
+        let rows = visibleRows
         selection.wrappedValue = RetortListModel.movedSelection(
             selection.wrappedValue,
             input: input,
-            rows: visibleRows,
-            pageSize: viewportRows
+            rows: rows,
+            pageSize: RetortListModel.pageSize(
+                viewportRows: viewportRows,
+                itemCount: rows.count
+            )
         )
         scrollSelectionIntoView()
         return .handled
@@ -621,14 +672,24 @@ private struct RetortListStorage<ID>: View where ID: Hashable {
         case .end:
             activeEditor.selectedChoiceIndex = choices.count - 1
         case .pageUp:
-            activeEditor.selectedChoiceIndex = max(index - viewportRows, 0)
+            activeEditor.selectedChoiceIndex = max(index - choicePageSize(for: choices), 0)
         case .pageDown:
-            activeEditor.selectedChoiceIndex = min(index + viewportRows, choices.count - 1)
+            activeEditor.selectedChoiceIndex = min(
+                index + choicePageSize(for: choices),
+                choices.count - 1
+            )
         default:
             break
         }
 
         self.activeEditor = activeEditor
+    }
+
+    private func choicePageSize(for choices: [String]) -> Int {
+        RetortListModel.pageSize(
+            viewportRows: viewportRows,
+            itemCount: choices.count
+        )
     }
 
     private func isTextEditorActive(for row: RetortListRow<ID>) -> Bool {
@@ -645,6 +706,11 @@ private struct RetortListStorage<ID>: View where ID: Hashable {
 
     private func scrollSelectionIntoView() {
         let rows = visibleRows
+        let contentLineCount = RetortListModel.contentLines(
+            from: rows,
+            activeEditor: activeEditor
+        )
+        .count
         let nextY = RetortListModel.scrollY(
             currentY: scrollPosition.y ?? 0,
             targetRange: RetortListModel.targetLineRange(
@@ -652,26 +718,16 @@ private struct RetortListStorage<ID>: View where ID: Hashable {
                 activeEditor: activeEditor,
                 rows: rows
             ),
-            viewportRows: viewportRows,
-            contentLineCount: RetortListModel.contentLines(
-                from: rows,
-                activeEditor: activeEditor
-            )
-            .count
+            viewportRows: RetortListModel.pageSize(
+                viewportRows: viewportRows,
+                itemCount: contentLineCount
+            ),
+            contentLineCount: contentLineCount
         )
 
         scrollPosition.scrollTo(y: nextY)
     }
 
-    private func editorCursorPrefix(
-        for row: RetortListRow<ID>,
-        isSelected: Bool
-    ) -> String {
-        RetortListModel.editorCursorPrefix(
-            forDepth: row.depth,
-            isSelected: isSelected
-        )
-    }
 }
 
 struct RetortListRow<ID>: Identifiable where ID: Hashable {
@@ -684,18 +740,307 @@ struct RetortListRow<ID>: Identifiable where ID: Hashable {
 
     var isCollapsed: Bool
 
+    var reservesDisclosureSpace: Bool
+
     var isGroup: Bool {
         !item.configuration.children.isEmpty
     }
 
-    var prefix: String {
-        let indent = String(repeating: "  ", count: depth)
+    var disclosureMarker: String {
         guard isGroup else {
-            return indent + "  "
+            return ""
         }
 
-        return indent + (isCollapsed ? "▸ " : "▾ ")
+        return isCollapsed ? "▸ " : "▾ "
     }
+}
+
+private struct RetortListRowLayout: Layout {
+
+    var depth: Int
+
+    var isGroup: Bool
+
+    var reservesDisclosureSpace: Bool
+
+    var hasLeadingAccessory: Bool
+
+    var hasSubtitle: Bool
+
+    func sizeThatFits(
+        proposal: ProposedViewSize,
+        subviews: Subviews,
+        cache: inout ()
+    ) -> GeometrySize {
+        let placements = placements(for: subviews)
+        let contentWidth = placements.map {
+            $0.column + $0.size.columns
+        }
+        .max() ?? 0
+        let contentHeight = placements.map(\.size.rows).max() ?? 0
+
+        return GeometrySize(
+            columns: proposal.columns ?? contentWidth,
+            rows: max(contentHeight, 1)
+        )
+    }
+
+    func placeSubviews(
+        in bounds: GeometryFrame,
+        proposal: ProposedViewSize,
+        subviews: Subviews,
+        cache: inout ()
+    ) {
+        for placement in placements(for: subviews) {
+            subviews[placement.index].place(
+                at: GeometryPoint(
+                    column: bounds.origin.column + placement.column,
+                    row: bounds.origin.row
+                )
+            )
+        }
+    }
+
+    private func placements(for subviews: Subviews) -> [RetortListRowLayoutPlacement] {
+        guard subviews.count >= 3 else {
+            return []
+        }
+
+        let cursorIndex = 0
+        let disclosureIndex = 1
+        let leadingAccessoryIndex = hasLeadingAccessory ? 2 : nil
+        let titleIndex = hasLeadingAccessory ? 3 : 2
+        let subtitleIndex = hasSubtitle ? titleIndex + 1 : nil
+
+        guard subviews.indices.contains(titleIndex) else {
+            return []
+        }
+
+        let cursorSize = subviews[cursorIndex].sizeThatFits(.unspecified)
+        let disclosureSize = subviews[disclosureIndex].sizeThatFits(.unspecified)
+        let leadingAccessorySize = leadingAccessoryIndex.map {
+            subviews[$0].sizeThatFits(.unspecified)
+        } ?? GeometrySize()
+        let titleSize = subviews[titleIndex].sizeThatFits(.unspecified)
+        let subtitleSize = subtitleIndex.map {
+            subviews[$0].sizeThatFits(.unspecified)
+        } ?? GeometrySize()
+
+        let columns = RetortListRowColumns(
+            cursorWidth: cursorSize.columns,
+            depth: depth,
+            isGroup: isGroup,
+            reservesDisclosureSpace: reservesDisclosureSpace,
+            disclosureWidth: disclosureSize.columns,
+            leadingAccessoryWidth: leadingAccessorySize.columns
+        )
+
+        var placements = [
+            RetortListRowLayoutPlacement(
+                index: cursorIndex,
+                column: 0,
+                size: cursorSize
+            ),
+            RetortListRowLayoutPlacement(
+                    index: disclosureIndex,
+                    column: columns.disclosureColumn,
+                    size: disclosureSize
+                ),
+        ]
+
+        if let leadingAccessoryIndex {
+            placements.append(
+                RetortListRowLayoutPlacement(
+                    index: leadingAccessoryIndex,
+                    column: columns.leadingAccessoryColumn,
+                    size: leadingAccessorySize
+                )
+            )
+        }
+
+        placements.append(
+            RetortListRowLayoutPlacement(
+                index: titleIndex,
+                column: columns.titleColumn,
+                size: titleSize
+            )
+        )
+
+        if let subtitleIndex {
+            placements.append(
+                RetortListRowLayoutPlacement(
+                    index: subtitleIndex,
+                    column: columns.titleColumn + titleSize.columns,
+                    size: subtitleSize
+                )
+            )
+        }
+
+        return placements
+    }
+}
+
+private struct RetortListEditorLineLayout: Layout {
+
+    var depth: Int
+
+    var isGroup: Bool
+
+    var reservesDisclosureSpace: Bool
+
+    var hasLeadingAccessory: Bool
+
+    func sizeThatFits(
+        proposal: ProposedViewSize,
+        subviews: Subviews,
+        cache: inout ()
+    ) -> GeometrySize {
+        let placements = placements(for: subviews, proposal: proposal)
+        let contentWidth = placements.map {
+            $0.column + $0.size.columns
+        }
+        .max() ?? 0
+        let contentHeight = placements.map(\.size.rows).max() ?? 0
+
+        return GeometrySize(
+            columns: proposal.columns ?? contentWidth,
+            rows: max(contentHeight, 1)
+        )
+    }
+
+    func placeSubviews(
+        in bounds: GeometryFrame,
+        proposal: ProposedViewSize,
+        subviews: Subviews,
+        cache: inout ()
+    ) {
+        for placement in placements(for: subviews, proposal: proposal) {
+            subviews[placement.index].place(
+                at: GeometryPoint(
+                    column: bounds.origin.column + placement.column,
+                    row: bounds.origin.row
+                ),
+                proposal: placement.proposal
+            )
+        }
+    }
+
+    private func placements(
+        for subviews: Subviews,
+        proposal: ProposedViewSize
+    ) -> [RetortListEditorLineLayoutPlacement] {
+        let cursorIndex = 0
+        let leadingAccessoryIndex = hasLeadingAccessory ? 1 : nil
+        let contentIndex = hasLeadingAccessory ? 2 : 1
+
+        guard subviews.indices.contains(contentIndex) else {
+            return []
+        }
+
+        let cursorSize = subviews[cursorIndex].sizeThatFits(.unspecified)
+        let leadingAccessorySize = leadingAccessoryIndex.map {
+            subviews[$0].sizeThatFits(.unspecified)
+        } ?? GeometrySize()
+        let columns = RetortListRowColumns(
+            cursorWidth: cursorSize.columns,
+            depth: depth,
+            isGroup: isGroup,
+            reservesDisclosureSpace: reservesDisclosureSpace,
+            disclosureWidth: 0,
+            leadingAccessoryWidth: leadingAccessorySize.columns
+        )
+        let cursorColumn = columns.titleColumn + 2
+        let contentColumn = cursorColumn + cursorSize.columns
+        let contentProposal = ProposedViewSize(
+            columns: proposal.columns.map {
+                max($0 - contentColumn, 0)
+            },
+            rows: proposal.rows
+        )
+        let contentSize = subviews[contentIndex].sizeThatFits(contentProposal)
+
+        return [
+            RetortListEditorLineLayoutPlacement(
+                index: cursorIndex,
+                column: cursorColumn,
+                size: cursorSize,
+                proposal: .unspecified
+            ),
+            RetortListEditorLineLayoutPlacement(
+                index: contentIndex,
+                column: contentColumn,
+                size: contentSize,
+                proposal: contentProposal
+            ),
+        ]
+    }
+}
+
+private struct RetortListRowColumns {
+
+    var cursorWidth: Int
+
+    var depth: Int
+
+    var isGroup: Bool
+
+    var reservesDisclosureSpace: Bool
+
+    var disclosureWidth: Int
+
+    var leadingAccessoryWidth: Int
+
+    var disclosureColumn: Int {
+        cursorWidth + indentWidth
+    }
+
+    var leadingAccessoryColumn: Int {
+        if isGroup || reservesDisclosureSpace {
+            return disclosureColumn + effectiveDisclosureWidth
+        }
+
+        return max(cursorWidth, targetTitleColumn - leadingAccessoryWidth)
+    }
+
+    var titleColumn: Int {
+        if isGroup || reservesDisclosureSpace {
+            return disclosureColumn + effectiveDisclosureWidth + leadingAccessoryWidth
+        }
+
+        return leadingAccessoryColumn + leadingAccessoryWidth
+    }
+
+    private var indentWidth: Int {
+        depth * 2
+    }
+
+    private var targetTitleColumn: Int {
+        cursorWidth + indentWidth
+    }
+
+    private var effectiveDisclosureWidth: Int {
+        max(disclosureWidth, reservesDisclosureSpace ? 2 : 0)
+    }
+}
+
+private struct RetortListRowLayoutPlacement {
+
+    var index: Int
+
+    var column: Int
+
+    var size: GeometrySize
+}
+
+private struct RetortListEditorLineLayoutPlacement {
+
+    var index: Int
+
+    var column: Int
+
+    var size: GeometrySize
+
+    var proposal: ProposedViewSize
 }
 
 enum RetortListNavigationInput {
@@ -756,30 +1101,53 @@ enum RetortListModel {
         from items: [RetortListItem<ID>],
         collapsedIDs: Set<ID>
     ) -> [RetortListRow<ID>] where ID: Hashable {
-        items.flatMap {
-            rows(for: $0, depth: 0, collapsedIDs: collapsedIDs)
+        let reservesDisclosureSpace = containsGroup(items)
+        return items.flatMap {
+            rows(
+                for: $0,
+                depth: 0,
+                collapsedIDs: collapsedIDs,
+                reservesDisclosureSpace: reservesDisclosureSpace
+            )
         }
     }
 
     static func rows<ID>(
         for item: RetortListItem<ID>,
         depth: Int,
-        collapsedIDs: Set<ID>
+        collapsedIDs: Set<ID>,
+        reservesDisclosureSpace: Bool
     ) -> [RetortListRow<ID>] where ID: Hashable {
         let isCollapsed = collapsedIDs.contains(item.configuration.id)
         let row = RetortListRow(
             id: item.configuration.id,
             depth: depth,
             item: item,
-            isCollapsed: isCollapsed
+            isCollapsed: isCollapsed,
+            reservesDisclosureSpace: reservesDisclosureSpace
         )
 
         guard !isCollapsed else {
             return [row]
         }
 
-        return [row] + item.configuration.children.flatMap {
-            rows(for: $0, depth: depth + 1, collapsedIDs: collapsedIDs)
+        let children = item.configuration.children
+        let childrenReserveDisclosureSpace = containsGroup(children)
+        return [row] + children.flatMap {
+            rows(
+                for: $0,
+                depth: depth + 1,
+                collapsedIDs: collapsedIDs,
+                reservesDisclosureSpace: childrenReserveDisclosureSpace
+            )
+        }
+    }
+
+    private static func containsGroup<ID>(
+        _ items: [RetortListItem<ID>]
+    ) -> Bool where ID: Hashable {
+        items.contains {
+            !$0.configuration.children.isEmpty
         }
     }
 
@@ -817,6 +1185,18 @@ enum RetortListModel {
 
         let index = min(max(currentIndex + offset, 0), rows.count - 1)
         return rows[index].id
+    }
+
+    static func pageSize(
+        viewportRows: Int,
+        itemCount: Int
+    ) -> Int {
+        let itemCount = max(itemCount, 1)
+        guard viewportRows > 0 else {
+            return itemCount
+        }
+
+        return min(max(viewportRows, 1), itemCount)
     }
 
     static func contentLines<ID>(
@@ -917,14 +1297,6 @@ enum RetortListModel {
         }
 
         return min(max(nextY, 0), maximumY)
-    }
-
-    static func editorCursorPrefix(
-        forDepth depth: Int,
-        isSelected: Bool
-    ) -> String {
-        String(repeating: "  ", count: depth + 3)
-            + (isSelected ? "❯ " : "  ")
     }
 
     private static func lineRange<ID>(
