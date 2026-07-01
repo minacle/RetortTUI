@@ -75,6 +75,24 @@ private enum RuntimeChoice: String, CaseIterable {
     case production
 }
 
+private final class RetortListEditingProbe {
+
+    var events: [RetortListEditingState<RuntimeListID>?] = []
+
+    func record(_ state: RetortListEditingState<RuntimeListID>?) {
+        events.append(state)
+    }
+}
+
+private final class RetortListEditingController {
+
+    var editing: RuntimeListID?
+
+    init(editing: RuntimeListID? = nil) {
+        self.editing = editing
+    }
+}
+
 @Test func retortListPublicRowAPIsRenderThroughList() {
     let runtime = StateRuntime()
     let view = RetortListPublicAPIRuntimeView()
@@ -514,6 +532,259 @@ private enum RuntimeChoice: String, CaseIterable {
     #expect(rejectedBlock?.lines.first?.contains("development") == true)
 }
 
+@Test func retortListTextEditingChangesReportDraftsAndClose() {
+    let runtime = StateRuntime()
+    let probe = RetortListEditingProbe()
+    let view = RetortListObservedTextEditorRuntimeView(probe: probe)
+    let proposal = RenderProposal(columns: 32, rows: 5)
+
+    _ = runtime.block(from: view, in: proposal)
+    _ = runtime.consumeInvalidation()
+    _ = runtime.block(from: view, in: proposal)
+
+    #expect(probe.events.isEmpty)
+
+    #expect(runtime.dispatch(KeyPress(key: .return, characters: "\n")) == .handled)
+    #expect(probe.events == [.text(id: .editor, draft: "")])
+    #expect(runtime.consumeInvalidation())
+    _ = runtime.block(from: view, in: proposal)
+
+    #expect(probe.events == [.text(id: .editor, draft: "")])
+
+    #expect(runtime.dispatch(KeyPress(key: "a", characters: "a")) == .handled)
+    #expect(runtime.consumeInvalidation())
+    _ = runtime.block(from: view, in: proposal)
+
+    #expect(probe.events == [
+        .text(id: .editor, draft: ""),
+        .text(id: .editor, draft: "a"),
+    ])
+
+    #expect(runtime.dispatch(KeyPress(key: .return, characters: "\n")) == .handled)
+    #expect(probe.events == [
+        .text(id: .editor, draft: ""),
+        .text(id: .editor, draft: "a"),
+        nil,
+    ])
+    #expect(runtime.consumeInvalidation())
+    _ = runtime.block(from: view, in: proposal)
+
+    #expect(probe.events == [
+        .text(id: .editor, draft: ""),
+        .text(id: .editor, draft: "a"),
+        nil,
+    ])
+}
+
+@Test func retortListRejectedTextCommitKeepsEditingStateOpen() {
+    let runtime = StateRuntime()
+    let probe = RetortListEditingProbe()
+    let view = RetortListObservedTextEditorRuntimeView(probe: probe)
+    let proposal = RenderProposal(columns: 32, rows: 5)
+
+    _ = runtime.block(from: view, in: proposal)
+    _ = runtime.consumeInvalidation()
+    _ = runtime.block(from: view, in: proposal)
+
+    #expect(runtime.dispatch(KeyPress(key: .return, characters: "\n")) == .handled)
+    #expect(probe.events == [.text(id: .editor, draft: "")])
+    #expect(runtime.consumeInvalidation())
+    _ = runtime.block(from: view, in: proposal)
+
+    #expect(runtime.dispatch(KeyPress(key: .return, characters: "\n")) == .handled)
+    #expect(probe.events == [.text(id: .editor, draft: "")])
+    #expect(runtime.consumeInvalidation())
+    let rejectedBlock = runtime.block(from: view, in: proposal)
+
+    #expect(rejectedBlock?.lines.contains { $0.contains("Error: required") } == true)
+    #expect(probe.events == [.text(id: .editor, draft: "")])
+}
+
+@Test func retortListChoiceEditingChangesReportSelectionAndClose() {
+    let runtime = StateRuntime()
+    let probe = RetortListEditingProbe()
+    let view = RetortListObservedChoiceEditorRuntimeView(probe: probe)
+    let proposal = RenderProposal(columns: 40, rows: 5)
+
+    _ = runtime.block(from: view, in: proposal)
+    _ = runtime.consumeInvalidation()
+    _ = runtime.block(from: view, in: proposal)
+
+    #expect(runtime.dispatch(KeyPress(key: .return, characters: "\n")) == .handled)
+    #expect(probe.events == [
+        .choice(id: .choice, selectedIndex: 0, selectedChoice: "development"),
+    ])
+    #expect(runtime.consumeInvalidation())
+    _ = runtime.block(from: view, in: proposal)
+
+    #expect(probe.events == [
+        .choice(id: .choice, selectedIndex: 0, selectedChoice: "development"),
+    ])
+
+    #expect(runtime.dispatch(KeyPress(key: .downArrow, characters: "\u{F701}")) == .handled)
+    #expect(probe.events == [
+        .choice(id: .choice, selectedIndex: 0, selectedChoice: "development"),
+        .choice(id: .choice, selectedIndex: 1, selectedChoice: "production"),
+    ])
+    #expect(runtime.consumeInvalidation())
+    _ = runtime.block(from: view, in: proposal)
+
+    #expect(probe.events == [
+        .choice(id: .choice, selectedIndex: 0, selectedChoice: "development"),
+        .choice(id: .choice, selectedIndex: 1, selectedChoice: "production"),
+    ])
+
+    dispatchClick(to: runtime, column: 4, row: 2)
+    #expect(probe.events == [
+        .choice(id: .choice, selectedIndex: 0, selectedChoice: "development"),
+        .choice(id: .choice, selectedIndex: 1, selectedChoice: "production"),
+        .choice(id: .choice, selectedIndex: 0, selectedChoice: "development"),
+    ])
+    #expect(runtime.consumeInvalidation())
+    _ = runtime.block(from: view, in: proposal)
+
+    #expect(probe.events == [
+        .choice(id: .choice, selectedIndex: 0, selectedChoice: "development"),
+        .choice(id: .choice, selectedIndex: 1, selectedChoice: "production"),
+        .choice(id: .choice, selectedIndex: 0, selectedChoice: "development"),
+    ])
+
+    #expect(runtime.dispatch(KeyPress(key: .return, characters: "\n")) == .handled)
+    #expect(probe.events == [
+        .choice(id: .choice, selectedIndex: 0, selectedChoice: "development"),
+        .choice(id: .choice, selectedIndex: 1, selectedChoice: "production"),
+        .choice(id: .choice, selectedIndex: 0, selectedChoice: "development"),
+        nil,
+    ])
+    #expect(runtime.consumeInvalidation())
+    _ = runtime.block(from: view, in: proposal)
+
+    #expect(probe.events == [
+        .choice(id: .choice, selectedIndex: 0, selectedChoice: "development"),
+        .choice(id: .choice, selectedIndex: 1, selectedChoice: "production"),
+        .choice(id: .choice, selectedIndex: 0, selectedChoice: "development"),
+        nil,
+    ])
+
+    let escapeRuntime = StateRuntime()
+    let escapeProbe = RetortListEditingProbe()
+    let escapeView = RetortListObservedChoiceEditorRuntimeView(probe: escapeProbe)
+
+    _ = escapeRuntime.block(from: escapeView, in: proposal)
+    _ = escapeRuntime.consumeInvalidation()
+    _ = escapeRuntime.block(from: escapeView, in: proposal)
+
+    #expect(escapeRuntime.dispatch(KeyPress(key: .return, characters: "\n")) == .handled)
+    #expect(escapeProbe.events == [
+        .choice(id: .choice, selectedIndex: 0, selectedChoice: "development"),
+    ])
+    #expect(escapeRuntime.consumeInvalidation())
+    _ = escapeRuntime.block(from: escapeView, in: proposal)
+
+    #expect(escapeRuntime.dispatch(KeyPress(key: .escape, characters: "\u{001B}")) == .handled)
+    #expect(escapeProbe.events == [
+        .choice(id: .choice, selectedIndex: 0, selectedChoice: "development"),
+        nil,
+    ])
+    #expect(escapeRuntime.consumeInvalidation())
+    _ = escapeRuntime.block(from: escapeView, in: proposal)
+
+    #expect(escapeProbe.events == [
+        .choice(id: .choice, selectedIndex: 0, selectedChoice: "development"),
+        nil,
+    ])
+}
+
+@Test func retortListControlledEditingBindingTracksUserOpenAndClose() {
+    let runtime = StateRuntime()
+    let controller = RetortListEditingController()
+    let probe = RetortListEditingProbe()
+    let view = RetortListControlledEditingRuntimeView(
+        controller: controller,
+        probe: probe,
+        initialSelection: .editor
+    )
+    let proposal = RenderProposal(columns: 40, rows: 5)
+
+    _ = runtime.block(from: view, in: proposal)
+    _ = runtime.consumeInvalidation()
+    _ = runtime.block(from: view, in: proposal)
+
+    #expect(controller.editing == nil)
+
+    #expect(runtime.dispatch(KeyPress(key: .return, characters: "\n")) == .handled)
+    #expect(controller.editing == .editor)
+    #expect(probe.events == [.text(id: .editor, draft: "")])
+    #expect(runtime.consumeInvalidation())
+    _ = runtime.block(from: view, in: proposal)
+
+    #expect(probe.events == [.text(id: .editor, draft: "")])
+
+    #expect(runtime.dispatch(KeyPress(key: .escape, characters: "\u{001B}")) == .handled)
+    #expect(controller.editing == nil)
+    #expect(probe.events == [
+        .text(id: .editor, draft: ""),
+        nil,
+    ])
+    #expect(runtime.consumeInvalidation())
+    _ = runtime.block(from: view, in: proposal)
+
+    #expect(probe.events == [
+        .text(id: .editor, draft: ""),
+        nil,
+    ])
+}
+
+@Test func retortListControlledEditingBindingOpensClosesAndNormalizesRequests() {
+    let runtime = StateRuntime()
+    let controller = RetortListEditingController(editing: .editor)
+    let probe = RetortListEditingProbe()
+    let view = RetortListControlledEditingRuntimeView(
+        controller: controller,
+        probe: probe,
+        initialSelection: .item(0)
+    )
+    let proposal = RenderProposal(columns: 40, rows: 5)
+
+    _ = runtime.block(from: view, in: proposal)
+    #expect(runtime.consumeInvalidation())
+    _ = runtime.block(from: view, in: proposal)
+
+    #expect(controller.editing == .editor)
+    #expect(probe.events == [.text(id: .editor, draft: "")])
+
+    controller.editing = nil
+    _ = runtime.block(from: view, in: proposal)
+    #expect(runtime.consumeInvalidation())
+    _ = runtime.block(from: view, in: proposal)
+
+    #expect(probe.events == [
+        .text(id: .editor, draft: ""),
+        nil,
+    ])
+
+    controller.editing = .choice
+    _ = runtime.block(from: view, in: proposal)
+    #expect(probe.events == [
+        .text(id: .editor, draft: ""),
+        nil,
+        .choice(id: .choice, selectedIndex: 0, selectedChoice: "development"),
+    ])
+    #expect(runtime.consumeInvalidation())
+    _ = runtime.block(from: view, in: proposal)
+
+    #expect(probe.events == [
+        .text(id: .editor, draft: ""),
+        nil,
+        .choice(id: .choice, selectedIndex: 0, selectedChoice: "development"),
+    ])
+
+    controller.editing = .item(0)
+    _ = runtime.block(from: view, in: proposal)
+
+    #expect(controller.editing == nil)
+}
+
 @Test func retortListChoiceEditorPageNavigationUsesViewportRows() {
     let runtime = StateRuntime()
     let view = RetortListLongChoiceEditorRuntimeView()
@@ -925,6 +1196,40 @@ private struct RetortListTextEditorRuntimeView: View {
     }
 }
 
+private struct RetortListObservedTextEditorRuntimeView: View {
+
+    let probe: RetortListEditingProbe
+
+    @FocusState
+    private var selection: RuntimeListID? = .editor
+
+    @State
+    private var value = ""
+
+    var body: some View {
+        RetortList(selection: $selection) {
+            RetortListItem(
+                id: .editor,
+                title: "Editor"
+            )
+            .editor(
+                $value,
+                validate: {
+                    guard !$0.isEmpty else {
+                        return .rejected("required")
+                    }
+
+                    return .accepted
+                }
+            )
+        }
+        .onEditingChange {
+            probe.record($0)
+        }
+        .frame(width: 32, height: 5, alignment: .leading)
+    }
+}
+
 private struct RetortListRejectingTextEditorRuntimeView: View {
 
     @FocusState
@@ -1041,6 +1346,109 @@ private struct RetortListChoiceEditorRuntimeView: View {
     }
 }
 
+private struct RetortListObservedChoiceEditorRuntimeView: View {
+
+    let probe: RetortListEditingProbe
+
+    @FocusState
+    private var selection: RuntimeListID? = .choice
+
+    @State
+    private var value = RuntimeChoice.development
+
+    var body: some View {
+        RetortList(selection: $selection) {
+            RetortListItem(
+                id: .choice,
+                title: "Choice"
+            )
+            .choices(
+                $value,
+                from: RuntimeChoice.allCases,
+                name: \.rawValue
+            )
+        }
+        .onEditingChange {
+            probe.record($0)
+        }
+        .frame(width: 40, height: 5, alignment: .leading)
+    }
+}
+
+private struct RetortListControlledEditingRuntimeView: View {
+
+    let controller: RetortListEditingController
+
+    let probe: RetortListEditingProbe
+
+    let initialSelection: RuntimeListID?
+
+    @FocusState
+    private var selection: RuntimeListID?
+
+    @State
+    private var text = ""
+
+    @State
+    private var choice = RuntimeChoice.development
+
+    init(
+        controller: RetortListEditingController,
+        probe: RetortListEditingProbe,
+        initialSelection: RuntimeListID?
+    ) {
+        self.controller = controller
+        self.probe = probe
+        self.initialSelection = initialSelection
+        self._selection = FocusState(wrappedValue: initialSelection)
+    }
+
+    var body: some View {
+        RetortList(
+            selection: $selection,
+            editing: Binding(
+                get: {
+                    controller.editing
+                },
+                set: {
+                    controller.editing = $0
+                }
+            )
+        ) {
+            RetortListItem(
+                id: .editor,
+                title: "Editor"
+            )
+            .editor(
+                $text,
+                validate: {
+                    guard !$0.isEmpty else {
+                        return .rejected("required")
+                    }
+
+                    return .accepted
+                }
+            )
+
+            RetortListItem(
+                id: .choice,
+                title: "Choice"
+            )
+            .choices(
+                $choice,
+                from: RuntimeChoice.allCases,
+                name: \.rawValue
+            )
+
+            RetortListItem(id: .item(0), title: "Plain")
+        }
+        .onEditingChange {
+            probe.record($0)
+        }
+        .frame(width: 40, height: 5, alignment: .leading)
+    }
+}
+
 private struct RetortListLongChoiceEditorRuntimeView: View {
 
     @FocusState
@@ -1063,6 +1471,27 @@ private struct RetortListLongChoiceEditorRuntimeView: View {
         }
         .frame(width: 40, height: 4, alignment: .leading)
     }
+}
+
+private func dispatchClick(
+    to runtime: StateRuntime,
+    column: Int,
+    row: Int,
+    at date: Date = Date(timeIntervalSinceReferenceDate: 1_000),
+    expecting result: KeyPress.Result = .handled
+) {
+    #expect(
+        runtime.dispatch(
+            MouseEvent(button: .left, column: column, row: row, phase: .down),
+            at: date
+        ) == result
+    )
+    #expect(
+        runtime.dispatch(
+            MouseEvent(button: .left, column: column, row: row, phase: .up),
+            at: date
+        ) == result
+    )
 }
 
 private struct RetortListThreeChoiceEditorRuntimeView: View {

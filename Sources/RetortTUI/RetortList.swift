@@ -8,6 +8,14 @@ public enum RetortListCommitResult: Equatable, Sendable {
     case rejected(String)
 }
 
+/// The currently active inline list editor state.
+public enum RetortListEditingState<ID>: Equatable where ID: Hashable {
+
+    case text(id: ID, draft: String)
+
+    case choice(id: ID, selectedIndex: Int, selectedChoice: String)
+}
+
 /// An inline editor that can be opened from a ``RetortListItem``.
 enum RetortListEditor {
 
@@ -274,11 +282,28 @@ public struct RetortList<ID>: View where ID: Hashable {
 
     private let selection: FocusState<ID?>.Binding
 
+    private let editing: Binding<ID?>?
+
+    private var onEditingChange: (RetortListEditingState<ID>?) -> Void
+
     public init(
         selection: FocusState<ID?>.Binding,
         @RetortListItemBuilder<ID> content: () -> [RetortListItem<ID>]
     ) {
         self.selection = selection
+        self.editing = nil
+        self.onEditingChange = { _ in }
+        self.items = content()
+    }
+
+    public init(
+        selection: FocusState<ID?>.Binding,
+        editing: Binding<ID?>,
+        @RetortListItemBuilder<ID> content: () -> [RetortListItem<ID>]
+    ) {
+        self.selection = selection
+        self.editing = editing
+        self.onEditingChange = { _ in }
         self.items = content()
     }
 
@@ -289,9 +314,19 @@ public struct RetortList<ID>: View where ID: Hashable {
             RetortListStorage(
                 items: items,
                 selection: selection,
+                editing: editing,
+                onEditingChange: onEditingChange,
                 viewportRows: proxy.rows
             )
         }
+    }
+
+    public func onEditingChange(
+        _ action: @escaping (RetortListEditingState<ID>?) -> Void
+    ) -> Self {
+        var copy = self
+        copy.onEditingChange = action
+        return copy
     }
 }
 
@@ -300,6 +335,10 @@ private struct RetortListStorage<ID>: View where ID: Hashable {
     let items: [RetortListItem<ID>]
 
     let selection: FocusState<ID?>.Binding
+
+    let editing: Binding<ID?>?
+
+    let onEditingChange: (RetortListEditingState<ID>?) -> Void
 
     let viewportRows: Int
 
@@ -341,6 +380,12 @@ private struct RetortListStorage<ID>: View where ID: Hashable {
         }
         .onKeyPress(.escape) {
             handleEscape()
+        }
+        .onChange(of: requestedEditingID, initial: true) {
+            synchronizeEditingRequest()
+        }
+        .onChange(of: editorDraft) {
+            notifyTextDraftChange()
         }
     }
 
@@ -490,7 +535,7 @@ private struct RetortListStorage<ID>: View where ID: Hashable {
                     .bold(isSelected)
             }
             .onTapGesture {
-                activeEditor?.selectedChoiceIndex = index
+                selectChoice(index)
             }
         }
     }
@@ -588,8 +633,7 @@ private struct RetortListStorage<ID>: View where ID: Hashable {
             return .ignored
         }
 
-        self.activeEditor = nil
-        isTextEditorFocused = false
+        closeEditor(updateEditingRequest: true)
         refocusRow(activeEditor.id)
         return .handled
     }
@@ -611,15 +655,7 @@ private struct RetortListStorage<ID>: View where ID: Hashable {
     }
 
     private func openEditor(_ editor: RetortListEditor, for id: ID) {
-        let nextEditor = RetortListActiveEditor(id: id, editor: editor)
-        activeEditor = nextEditor
-        editorDraft = nextEditor.draft
-        switch editor {
-        case .text:
-            isTextEditorFocused = true
-        case .choice:
-            isTextEditorFocused = false
-        }
+        openEditor(editor, for: id, updateEditingRequest: true)
     }
 
     private func commitActiveEditor(for item: RetortListItem<ID>) {
@@ -639,8 +675,7 @@ private struct RetortListStorage<ID>: View where ID: Hashable {
 
         switch result {
         case .accepted:
-            self.activeEditor = nil
-            isTextEditorFocused = false
+            closeEditor(updateEditingRequest: true)
             refocusRow(activeEditor.id)
         case .rejected(let message):
             activeEditor.errorMessage = message
@@ -662,27 +697,154 @@ private struct RetortListStorage<ID>: View where ID: Hashable {
         }
 
         let index = activeEditor.selectedChoiceIndex
+        let nextIndex: Int
         switch key {
         case .upArrow, .leftArrow:
-            activeEditor.selectedChoiceIndex = max(index - 1, 0)
+            nextIndex = max(index - 1, 0)
         case .downArrow, .rightArrow:
-            activeEditor.selectedChoiceIndex = min(index + 1, choices.count - 1)
+            nextIndex = min(index + 1, choices.count - 1)
         case .home:
-            activeEditor.selectedChoiceIndex = 0
+            nextIndex = 0
         case .end:
-            activeEditor.selectedChoiceIndex = choices.count - 1
+            nextIndex = choices.count - 1
         case .pageUp:
-            activeEditor.selectedChoiceIndex = max(index - choicePageSize(for: choices), 0)
+            nextIndex = max(index - choicePageSize(for: choices), 0)
         case .pageDown:
-            activeEditor.selectedChoiceIndex = min(
+            nextIndex = min(
                 index + choicePageSize(for: choices),
                 choices.count - 1
             )
         default:
-            break
+            return
         }
 
+        guard nextIndex != index else {
+            return
+        }
+
+        activeEditor.selectedChoiceIndex = nextIndex
         self.activeEditor = activeEditor
+        notifyEditingChange()
+    }
+
+    private func selectChoice(_ index: Int) {
+        guard var activeEditor,
+              let choices = activeEditor.choices,
+              choices.indices.contains(index),
+              activeEditor.selectedChoiceIndex != index else {
+            return
+        }
+
+        activeEditor.selectedChoiceIndex = index
+        self.activeEditor = activeEditor
+        notifyEditingChange()
+    }
+
+    private var requestedEditingID: ID? {
+        editing?.wrappedValue
+    }
+
+    private var currentEditingState: RetortListEditingState<ID>? {
+        guard let activeEditor else {
+            return nil
+        }
+
+        guard let choices = activeEditor.choices else {
+            return .text(id: activeEditor.id, draft: editorDraft)
+        }
+
+        guard choices.indices.contains(activeEditor.selectedChoiceIndex) else {
+            return nil
+        }
+
+        return .choice(
+            id: activeEditor.id,
+            selectedIndex: activeEditor.selectedChoiceIndex,
+            selectedChoice: choices[activeEditor.selectedChoiceIndex]
+        )
+    }
+
+    private func synchronizeEditingRequest() {
+        guard let editing else {
+            return
+        }
+
+        guard let id = editing.wrappedValue else {
+            closeEditor(updateEditingRequest: false)
+            return
+        }
+
+        if activeEditor?.id == id {
+            return
+        }
+
+        guard let row = visibleRows.first(where: { $0.id == id }),
+              let editor = row.item.configuration.editor else {
+            updateEditingRequest(nil)
+            return
+        }
+
+        selection.wrappedValue = id
+        openEditor(editor, for: id, updateEditingRequest: false)
+        scrollSelectionIntoView()
+    }
+
+    private func openEditor(
+        _ editor: RetortListEditor,
+        for id: ID,
+        updateEditingRequest: Bool
+    ) {
+        let nextEditor = RetortListActiveEditor(id: id, editor: editor)
+        activeEditor = nextEditor
+        editorDraft = nextEditor.draft
+        if updateEditingRequest {
+            self.updateEditingRequest(id)
+        }
+        switch editor {
+        case .text:
+            isTextEditorFocused = true
+        case .choice:
+            isTextEditorFocused = false
+        }
+        notifyEditingChange()
+    }
+
+    private func closeEditor(updateEditingRequest: Bool) {
+        let wasEditing = activeEditor != nil
+        activeEditor = nil
+        editorDraft = ""
+        isTextEditorFocused = false
+        if updateEditingRequest {
+            self.updateEditingRequest(nil)
+        }
+        if wasEditing {
+            notifyEditingChange()
+        }
+    }
+
+    private func updateEditingRequest(_ id: ID?) {
+        guard let editing,
+              editing.wrappedValue != id else {
+            return
+        }
+
+        editing.wrappedValue = id
+    }
+
+    private func notifyEditingChange() {
+        onEditingChange(currentEditingState)
+    }
+
+    private func notifyTextDraftChange() {
+        guard var activeEditor,
+              activeEditor.choices == nil,
+              activeEditor.draft != editorDraft else {
+            return
+        }
+
+        activeEditor.draft = editorDraft
+        self.activeEditor = activeEditor
+        notifyEditingChange()
     }
 
     private func choicePageSize(for choices: [String]) -> Int {
