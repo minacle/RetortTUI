@@ -75,26 +75,6 @@ private enum RuntimeChoice: String, CaseIterable {
     case production
 }
 
-private enum RuntimeSubscriberAction: CaseIterable, Hashable {
-
-    case accept
-
-    case reject
-
-    case remove
-
-    var title: String {
-        switch self {
-        case .accept:
-            return "Accept"
-        case .reject:
-            return "Reject"
-        case .remove:
-            return "Remove"
-        }
-    }
-}
-
 private final class RetortListEditingProbe {
 
     var events: [RetortListEditingState<RuntimeListID>?] = []
@@ -742,7 +722,7 @@ private final class RetortListEditingController {
     #expect(runtime.consumeInvalidation())
     let editingBlock = runtime.block(from: view, in: proposal)
 
-    #expect(editingBlock?.lines.contains { $0.contains("accept") } == true)
+    #expect(editingBlock?.lines.contains { $0.contains("production") } == true)
 }
 
 @Test func retortListControlledEditingBindingTracksUserOpenAndClose() {
@@ -1491,9 +1471,9 @@ private struct RetortListConditionalFooterHintRuntimeView: View {
                     title: "example.social"
                 )
                 .choices(
-                    .constant(RuntimeSubscriberAction.accept),
-                    from: RuntimeSubscriberAction.allCases,
-                    name: \.title
+                    .constant(RuntimeChoice.production),
+                    from: [RuntimeChoice.production],
+                    name: \.rawValue
                 )
                 .subtitle {
                     Text("")
@@ -1505,7 +1485,7 @@ private struct RetortListConditionalFooterHintRuntimeView: View {
                     return
                 }
 
-                $editingItemHint.wrappedValue = title.lowercased()
+                editingItemHint = title.lowercased()
             }
             .frame(width: 40, height: 4, alignment: .leading)
 

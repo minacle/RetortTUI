@@ -3,10 +3,21 @@
 
 import PackageDescription
 
+let swiftSettings: [SwiftSetting] = [
+    .defaultIsolation(MainActor.self),
+    .strictMemorySafety(),
+    .enableUpcomingFeature("ExistentialAny"),
+    .enableUpcomingFeature("ImmutableWeakCaptures"),
+    .enableUpcomingFeature("InferIsolatedConformances"),
+    .enableUpcomingFeature("InternalImportsByDefault"),
+    .enableUpcomingFeature("MemberImportVisibility"),
+    .enableUpcomingFeature("NonisolatedNonsendingByDefault"),
+]
+
 let package = Package(
     name: "RetortTUI",
     platforms: [
-        .macOS(.v13),
+        .macOS(.v15),
     ],
     products: [
         .library(
@@ -31,11 +42,13 @@ let package = Package(
                     name: "SwiftTUI",
                     package: "swift-tui"
                 ),
-            ]
+            ],
+            swiftSettings: swiftSettings,
         ),
         .executableTarget(
             name: "RetortTUISample",
-            dependencies: ["RetortTUI"]
+            dependencies: ["RetortTUI"],
+            swiftSettings: swiftSettings,
         ),
         .testTarget(
             name: "RetortTUITests",
@@ -45,8 +58,9 @@ let package = Package(
                     name: "SwiftTUI",
                     package: "swift-tui"
                 ),
-            ]
+            ],
+            swiftSettings: swiftSettings,
         ),
     ],
-    swiftLanguageModes: [.v6]
+    swiftLanguageModes: [.v6],
 )

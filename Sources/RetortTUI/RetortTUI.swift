@@ -1,1 +1,2 @@
-@_exported public import SwiftTUI
+@_exported
+public import SwiftTUI

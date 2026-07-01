@@ -619,7 +619,8 @@ private struct ForEachRows: View {
 
     var body: some View {
         ForEach(rows.indices) { index in
-            Text("row \(String(format: "%02d", index)): \(rows[index])")
+            let rowNumber = index < 10 ? "0\(index)" : String(index)
+            Text("row \(rowNumber): \(rows[index])")
         }
     }
 }

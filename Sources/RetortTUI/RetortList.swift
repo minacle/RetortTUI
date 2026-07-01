@@ -151,7 +151,7 @@ public struct RetortListItem<ID>: View where ID: Hashable {
         editor(
             value,
             text: { String($0) },
-            parse: Value.init,
+            parse: { Value($0) },
             invalidMessage: invalidMessage,
             validate: validate
         )
@@ -797,9 +797,6 @@ private struct RetortListStorage<ID>: View where ID: Hashable {
         let nextEditor = RetortListActiveEditor(id: id, editor: editor)
         activeEditor = nextEditor
         editorDraft = nextEditor.draft
-        if updateEditingRequest {
-            self.updateEditingRequest(id)
-        }
         switch editor {
         case .text:
             isTextEditorFocused = true
@@ -807,6 +804,9 @@ private struct RetortListStorage<ID>: View where ID: Hashable {
             isTextEditorFocused = false
         }
         notifyEditingChange()
+        if updateEditingRequest {
+            self.updateEditingRequest(id)
+        }
     }
 
     private func closeEditor(updateEditingRequest: Bool) {
@@ -814,11 +814,11 @@ private struct RetortListStorage<ID>: View where ID: Hashable {
         activeEditor = nil
         editorDraft = ""
         isTextEditorFocused = false
-        if updateEditingRequest {
-            self.updateEditingRequest(nil)
-        }
         if wasEditing {
             notifyEditingChange()
+        }
+        if updateEditingRequest {
+            self.updateEditingRequest(nil)
         }
     }
 
@@ -1138,7 +1138,7 @@ private struct RetortListEditorLineLayout: Layout {
     }
 }
 
-private struct RetortListRowColumns {
+private nonisolated struct RetortListRowColumns {
 
     var cursorWidth: Int
 
