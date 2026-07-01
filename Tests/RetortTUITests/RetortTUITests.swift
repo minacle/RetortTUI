@@ -75,6 +75,26 @@ private enum RuntimeChoice: String, CaseIterable {
     case production
 }
 
+private enum RuntimeSubscriberAction: CaseIterable, Hashable {
+
+    case accept
+
+    case reject
+
+    case remove
+
+    var title: String {
+        switch self {
+        case .accept:
+            return "Accept"
+        case .reject:
+            return "Reject"
+        case .remove:
+            return "Remove"
+        }
+    }
+}
+
 private final class RetortListEditingProbe {
 
     var events: [RetortListEditingState<RuntimeListID>?] = []
@@ -693,6 +713,36 @@ private final class RetortListEditingController {
         .choice(id: .choice, selectedIndex: 0, selectedChoice: "development"),
         nil,
     ])
+}
+
+@Test func retortListEditingChangeCanDirectlyMutateParentStateFirstReadAfterAction() {
+    let runtime = StateRuntime()
+    let view = RetortListDirectEditingHintRuntimeView()
+    let proposal = RenderProposal(columns: 40, rows: 6)
+
+    let initialBlock = runtime.block(from: view, in: proposal)
+    #expect(initialBlock?.lines.contains { $0.contains("idle") } == true)
+
+    #expect(runtime.dispatch(KeyPress(key: .return, characters: "\n")) == .handled)
+    #expect(runtime.consumeInvalidation())
+    let editingBlock = runtime.block(from: view, in: proposal)
+
+    #expect(editingBlock?.lines.contains { $0.contains("development") } == true)
+}
+
+@Test func retortListChoiceEditingChangeUpdatesConditionalFooterHint() {
+    let runtime = StateRuntime()
+    let view = RetortListConditionalFooterHintRuntimeView()
+    let proposal = RenderProposal(columns: 40, rows: 6)
+
+    let initialBlock = runtime.block(from: view, in: proposal)
+    #expect(initialBlock?.lines.contains { $0.contains("idle") } == true)
+
+    #expect(runtime.dispatch(KeyPress(key: .return, characters: "\n")) == .handled)
+    #expect(runtime.consumeInvalidation())
+    let editingBlock = runtime.block(from: view, in: proposal)
+
+    #expect(editingBlock?.lines.contains { $0.contains("accept") } == true)
 }
 
 @Test func retortListControlledEditingBindingTracksUserOpenAndClose() {
@@ -1372,6 +1422,103 @@ private struct RetortListObservedChoiceEditorRuntimeView: View {
             probe.record($0)
         }
         .frame(width: 40, height: 5, alignment: .leading)
+    }
+}
+
+private struct RetortListDirectEditingHintRuntimeView: View {
+
+    @FocusState
+    private var selection: RuntimeListID? = .choice
+
+    @State
+    private var editing: RuntimeListID?
+
+    @State
+    private var value = RuntimeChoice.development
+
+    @State
+    private var hint = ""
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            RetortList(selection: $selection, editing: $editing) {
+                RetortListItem(
+                    id: .choice,
+                    title: "Choice"
+                )
+                .choices(
+                    $value,
+                    from: RuntimeChoice.allCases,
+                    name: \.rawValue
+                )
+            }
+            .onEditingChange {
+                guard case .choice(_, _, let title) = $0 else {
+                    hint = ""
+                    return
+                }
+
+                hint = title.lowercased()
+            }
+            .frame(width: 40, height: 4, alignment: .leading)
+
+            if editing == nil {
+                Text("idle")
+            }
+            else {
+                Text(hint.isEmpty ? "empty" : hint)
+            }
+        }
+    }
+}
+
+private struct RetortListConditionalFooterHintRuntimeView: View {
+
+    @FocusState
+    private var selection: RuntimeListID? = .item(0)
+
+    @State
+    private var editing: RuntimeListID?
+
+    @State
+    private var editingItemHint = ""
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            RetortList(selection: $selection, editing: $editing) {
+                RetortListItem(
+                    id: .item(0),
+                    title: "example.social"
+                )
+                .choices(
+                    .constant(RuntimeSubscriberAction.accept),
+                    from: RuntimeSubscriberAction.allCases,
+                    name: \.title
+                )
+                .subtitle {
+                    Text("")
+                }
+            }
+            .onEditingChange {
+                guard case .choice(_, _, let title) = $0 else {
+                    editingItemHint = ""
+                    return
+                }
+
+                $editingItemHint.wrappedValue = title.lowercased()
+            }
+            .frame(width: 40, height: 4, alignment: .leading)
+
+            if editing == nil {
+                Text("idle")
+            }
+            else {
+                HStack(spacing: 1) {
+                    Text("return")
+                    Text(editingItemHint)
+                }
+            }
+        }
     }
 }
 
