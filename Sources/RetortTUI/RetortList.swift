@@ -47,6 +47,8 @@ struct RetortListItemConfiguration<ID> where ID: Hashable {
 
     var reset: (() -> Void)?
 
+    var collapsed: Binding<Bool>?
+
     var children: [RetortListItem<ID>]
 }
 
@@ -69,26 +71,24 @@ public struct RetortListItem<ID>: View where ID: Hashable {
             editor: nil,
             action: nil,
             reset: nil,
+            collapsed: nil,
             children: []
         )
     }
 
     public init(
         id: ID,
-        title: String,
-        @RetortListItemBuilder<ID> children: () -> [Self] = { [] }
+        title: String
     ) {
         self.init(
             id: id,
-            title: Text(title),
-            children: children
+            title: Text(title)
         )
     }
 
     public init(
         id: ID,
-        title: Text,
-        @RetortListItemBuilder<ID> children: () -> [Self] = { [] }
+        title: Text
     ) {
         self.configuration = RetortListItemConfiguration(
             id: id,
@@ -98,6 +98,40 @@ public struct RetortListItem<ID>: View where ID: Hashable {
             editor: nil,
             action: nil,
             reset: nil,
+            collapsed: nil,
+            children: []
+        )
+    }
+
+    public init(
+        id: ID,
+        title: String,
+        collapsed: Binding<Bool>? = nil,
+        @RetortListItemBuilder<ID> children: () -> [Self]
+    ) {
+        self.init(
+            id: id,
+            title: Text(title),
+            collapsed: collapsed,
+            children: children
+        )
+    }
+
+    public init(
+        id: ID,
+        title: Text,
+        collapsed: Binding<Bool>? = nil,
+        @RetortListItemBuilder<ID> children: () -> [Self]
+    ) {
+        self.configuration = RetortListItemConfiguration(
+            id: id,
+            title: AnyView(title),
+            subtitle: nil,
+            leadingAccessory: nil,
+            editor: nil,
+            action: nil,
+            reset: nil,
+            collapsed: collapsed,
             children: children()
         )
     }
@@ -586,7 +620,7 @@ private struct RetortListStorage<ID>: View where ID: Hashable {
         }
 
         if row.isGroup {
-            toggle(row.id)
+            toggle(row)
             scrollSelectionIntoView()
             return .handled
         }
@@ -612,7 +646,7 @@ private struct RetortListStorage<ID>: View where ID: Hashable {
             return .ignored
         }
 
-        toggle(row.id)
+        toggle(row)
         scrollSelectionIntoView()
         return .handled
     }
@@ -645,7 +679,13 @@ private struct RetortListStorage<ID>: View where ID: Hashable {
         }
     }
 
-    private func toggle(_ id: ID) {
+    private func toggle(_ row: RetortListRow<ID>) {
+        let id = row.id
+        if let collapsed = row.item.configuration.collapsed {
+            collapsed.wrappedValue.toggle()
+            return
+        }
+
         if collapsedIDs.contains(id) {
             collapsedIDs.remove(id)
         }
@@ -1280,7 +1320,8 @@ enum RetortListModel {
         collapsedIDs: Set<ID>,
         reservesDisclosureSpace: Bool
     ) -> [RetortListRow<ID>] where ID: Hashable {
-        let isCollapsed = collapsedIDs.contains(item.configuration.id)
+        let isCollapsed = item.configuration.collapsed?.wrappedValue
+            ?? collapsedIDs.contains(item.configuration.id)
         let row = RetortListRow(
             id: item.configuration.id,
             depth: depth,

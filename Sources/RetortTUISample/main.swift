@@ -1,9 +1,5 @@
 import Foundation
-#if canImport(Combine)
-import Combine
-#else
-import OpenCombine
-#endif
+import Observation
 import RetortTUI
 
 @main
@@ -52,7 +48,7 @@ private struct SampleContent: View {
 
     @State private var allAxisScroll = ScrollPosition(point: ScrollPoint(x: 0, y: 0))
 
-    @StateObject private var observableCounter = SampleObservableCounter()
+    @State private var observableCounter = SampleObservableCounter()
 
     var body: some View {
         VStack(alignment: .leading, spacing: 1) {
@@ -192,9 +188,10 @@ private extension EnvironmentValues {
     }
 }
 
-private final class SampleObservableCounter: ObservableObject {
+@Observable
+private final class SampleObservableCounter {
 
-    @Published var count = 0
+    var count = 0
 }
 
 private enum RetortListDemoID: Hashable {
@@ -224,6 +221,8 @@ private struct RetortListDemo: View {
 
     @State private var mode = "development"
 
+    @State private var runtimeCollapsed = true
+
     @State private var actionStatus = "idle"
 
     var body: some View {
@@ -245,7 +244,11 @@ private struct RetortListDemo: View {
                 Text("●").color(.green)
             }
 
-            RetortListItem(id: .runtime, title: "Runtime") {
+            RetortListItem(
+                id: .runtime,
+                title: "Runtime",
+                collapsed: $runtimeCollapsed
+            ) {
                 RetortListItem(id: .port) {
                     Text("Port")
                 }
@@ -629,7 +632,7 @@ private struct LayoutAndBindingDemo: View {
 
     @Binding var profile: Profile
 
-    @ObservedObject var observableCounter: SampleObservableCounter
+    var observableCounter: SampleObservableCounter
 
     @State private var lifecycleStatus = "pending"
 

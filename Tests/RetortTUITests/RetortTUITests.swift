@@ -148,6 +148,30 @@ private final class RetortListEditingController {
     #expect(block?.lines.contains { $0.contains("Child") } == true)
 }
 
+@Test func retortListBoundCollapsedBindingControlsTreeRows() {
+    let runtime = StateRuntime()
+    let view = RetortListBoundCollapsedRuntimeView()
+    let proposal = RenderProposal(columns: 32, rows: 4)
+
+    var block = runtime.block(from: view, in: proposal)
+    #expect(block?.lines.contains { $0.contains("▸ Group") } == true)
+    #expect(block?.lines.contains { $0.contains("Child") } == false)
+
+    #expect(runtime.dispatch(KeyPress(key: .return, characters: "\n")) == .handled)
+    #expect(runtime.consumeInvalidation())
+
+    block = runtime.block(from: view, in: proposal)
+    #expect(block?.lines.contains { $0.contains("▾ Group") } == true)
+    #expect(block?.lines.contains { $0.contains("Child") } == true)
+
+    #expect(runtime.dispatch(KeyPress(key: .space, characters: " ")) == .handled)
+    #expect(runtime.consumeInvalidation())
+
+    block = runtime.block(from: view, in: proposal)
+    #expect(block?.lines.contains { $0.contains("▸ Group") } == true)
+    #expect(block?.lines.contains { $0.contains("Child") } == false)
+}
+
 @Test func retortListOmitsDisclosureSpaceWhenSiblingLevelHasNoGroups() {
     let runtime = StateRuntime()
     let view = RetortListNestedLeafRuntimeView()
@@ -1011,6 +1035,29 @@ private struct RetortListTreeRuntimeView: View {
     var body: some View {
         RetortList(selection: $selection) {
             RetortListItem(id: .group, title: "Group") {
+                RetortListItem(id: .child, title: "Child")
+            }
+            RetortListItem(id: .item(0), title: "Item 0")
+        }
+        .frame(width: 32, height: 4, alignment: .leading)
+    }
+}
+
+private struct RetortListBoundCollapsedRuntimeView: View {
+
+    @FocusState
+    private var selection: RuntimeListID? = .group
+
+    @State
+    private var collapsed = true
+
+    var body: some View {
+        RetortList(selection: $selection) {
+            RetortListItem(
+                id: .group,
+                title: "Group",
+                collapsed: $collapsed
+            ) {
                 RetortListItem(id: .child, title: "Child")
             }
             RetortListItem(id: .item(0), title: "Item 0")
