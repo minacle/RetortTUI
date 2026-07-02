@@ -1201,15 +1201,11 @@ private nonisolated struct RetortListRowColumns {
             return disclosureColumn + effectiveDisclosureWidth
         }
 
-        return max(cursorWidth, targetTitleColumn - leadingAccessoryWidth)
+        return targetTitleColumn + (depth > 0 ? 2 : 0)
     }
 
     var titleColumn: Int {
-        if isGroup || reservesDisclosureSpace {
-            return disclosureColumn + effectiveDisclosureWidth + leadingAccessoryWidth
-        }
-
-        return leadingAccessoryColumn + leadingAccessoryWidth
+        leadingAccessoryColumn + titleLeadingAccessoryWidth
     }
 
     private var indentWidth: Int {
@@ -1222,6 +1218,10 @@ private nonisolated struct RetortListRowColumns {
 
     private var effectiveDisclosureWidth: Int {
         max(disclosureWidth, reservesDisclosureSpace ? 2 : 0)
+    }
+
+    private var titleLeadingAccessoryWidth: Int {
+        leadingAccessoryWidth
     }
 }
 

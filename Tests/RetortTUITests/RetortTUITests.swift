@@ -180,9 +180,9 @@ private final class RetortListEditingController {
     let block = runtime.block(from: view, in: proposal)
 
     #expect(block?.lines.first?.hasPrefix("❯ ▾ Group") == true)
-    #expect(block?.lines.contains { $0.hasPrefix("  ● Accessory child") } == true)
-    #expect(block?.lines.contains { $0.hasPrefix("    Plain child") } == true)
-    #expect(block?.lines.contains { $0.hasPrefix("      Plain child") } == false)
+    #expect(block?.lines.contains { $0.hasPrefix("      ● Accessory child") } == true)
+    #expect(block?.lines.contains { $0.hasPrefix("      Plain child") } == true)
+    #expect(block?.lines.contains { $0.hasPrefix("    ● Accessory child") } == false)
 }
 
 @Test func retortListReservesDisclosureSpaceWhenNestedSiblingLevelHasGroups() {
@@ -197,14 +197,34 @@ private final class RetortListEditingController {
     #expect(block?.lines.contains { $0.hasPrefix("    ▾ ● Both child") } == true)
 }
 
+@Test func retortListMastodonConfigurationShapeAlignsNestedMarkers() {
+    let runtime = StateRuntime()
+    let view = RetortListMastodonConfigurationRuntimeView()
+    let proposal = RenderProposal(columns: 80, rows: 24)
+
+    let lines = runtime.block(from: view, in: proposal)?.lines ?? []
+
+    #expect(lines.contains { $0.hasPrefix("    ● Mode  official") })
+    #expect(lines.contains { $0.hasPrefix("  ▾ ● Network Access  standard") })
+    #expect(lines.contains { $0.hasPrefix("      ○ Trusted proxy IPs") })
+    #expect(lines.contains { $0.hasPrefix("      ○ Private address exceptions") })
+    #expect(lines.contains { $0.hasPrefix("      ● Limited federation mode  false") })
+    #expect(lines.contains { $0.hasPrefix("  ▾ ● Admin  needs setup") })
+    #expect(lines.contains { $0.hasPrefix("❯     ● Username") })
+    #expect(lines.contains { $0.hasPrefix("      ● Role  Owner") })
+    #expect(lines.contains { $0.hasPrefix("  ▸ ● Web  127.0.0.1:3000") })
+    #expect(lines.contains { $0.hasPrefix("  ○ Trusted proxy IPs") } == false)
+    #expect(lines.contains { $0.hasPrefix("● Username") } == false)
+}
+
 @Test func retortListTextEditorIndentationMatchesNestedRows() {
     #expect(
         openedTextEditorCursor(in: RetortListNestedPlainTextEditorRuntimeView())
-            == RenderedCursor(row: 2, column: 8)
+            == RenderedCursor(row: 2, column: 10)
     )
     #expect(
         openedTextEditorCursor(in: RetortListNestedAccessoryTextEditorRuntimeView())
-            == RenderedCursor(row: 2, column: 8)
+            == RenderedCursor(row: 2, column: 12)
     )
     #expect(
         openedTextEditorCursor(in: RetortListNestedReservedTextEditorRuntimeView())
@@ -213,6 +233,10 @@ private final class RetortListEditingController {
     #expect(
         openedTextEditorCursor(in: RetortListNestedReservedAccessoryTextEditorRuntimeView())
             == RenderedCursor(row: 2, column: 12)
+    )
+    #expect(
+        openedTextEditorCursor(in: RetortListMastodonConfigurationRuntimeView())
+            == RenderedCursor(row: 11, column: 12)
     )
 }
 
@@ -1105,6 +1129,111 @@ private struct RetortListNestedGroupRuntimeView: View {
             }
         }
         .frame(width: 40, height: 6, alignment: .leading)
+    }
+}
+
+private struct RetortListMastodonConfigurationRuntimeView: View {
+
+    @FocusState
+    private var selection: RuntimeListID? = .item(10)
+
+    @State
+    private var username = ""
+
+    @State
+    private var webCollapsed = true
+
+    var body: some View {
+        RetortList(selection: $selection) {
+            configurationItem(id: .item(0), title: "Mode", marker: "●", subtitle: "official")
+            configurationItem(id: .item(1), title: "Version", marker: "●", subtitle: "v4.6")
+            configurationItem(id: .item(2), title: "Local domain", marker: "●")
+            configurationItem(id: .item(3), title: "Server name", marker: "●")
+
+            configurationGroup(
+                id: .item(4),
+                title: "Network Access",
+                marker: "●",
+                subtitle: "standard"
+            ) {
+                configurationItem(id: .item(5), title: "Trusted proxy IPs", marker: "○")
+                configurationItem(id: .item(6), title: "Private address exceptions", marker: "○")
+                configurationItem(id: .item(7), title: "Limited federation mode", marker: "●", subtitle: "false")
+                configurationItem(id: .item(8), title: "Authenticated API access", marker: "●", subtitle: "false")
+            }
+
+            configurationGroup(
+                id: .item(9),
+                title: "Admin",
+                marker: "●",
+                subtitle: "needs setup"
+            ) {
+                configurationItem(id: .item(10), title: "Username", marker: "●")
+                    .editor($username)
+                configurationItem(id: .item(11), title: "Email", marker: "●")
+                configurationItem(id: .item(12), title: "Password", marker: "●")
+                configurationItem(id: .item(13), title: "Role", marker: "●", subtitle: "Owner")
+            }
+
+            configurationGroup(
+                id: .item(14),
+                title: "Web",
+                marker: "●",
+                subtitle: "127.0.0.1:3000",
+                collapsed: $webCollapsed
+            ) {
+                configurationItem(id: .item(15), title: "IP address", marker: "●", subtitle: "127.0.0.1")
+                configurationItem(id: .item(16), title: "Port", marker: "●", subtitle: "3000")
+            }
+        }
+        .frame(width: 80, height: 24, alignment: .leading)
+    }
+
+    private func configurationItem(
+        id: RuntimeListID,
+        title: String,
+        marker: String,
+        subtitle: String? = nil
+    ) -> RetortListItem<RuntimeListID> {
+        var item = RetortListItem(id: id, title: title)
+            .leadingAccessory {
+                Text(marker)
+            }
+
+        if let subtitle {
+            item = item.subtitle {
+                Text(subtitle)
+            }
+        }
+
+        return item
+    }
+
+    private func configurationGroup(
+        id: RuntimeListID,
+        title: String,
+        marker: String,
+        subtitle: String? = nil,
+        collapsed: Binding<Bool>? = nil,
+        @RetortListItemBuilder<RuntimeListID> children: () -> [RetortListItem<RuntimeListID>]
+    ) -> RetortListItem<RuntimeListID> {
+        var item = RetortListItem(
+            id: id,
+            title: title,
+            collapsed: collapsed,
+            children: children
+        )
+        .leadingAccessory {
+            Text(marker)
+        }
+
+        if let subtitle {
+            item = item.subtitle {
+                Text(subtitle)
+            }
+        }
+
+        return item
     }
 }
 
