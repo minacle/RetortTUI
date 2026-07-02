@@ -31,7 +31,8 @@ let package = Package(
     ],
     dependencies: [
         .package(
-            path: "../swift-tui"
+            url: "https://github.com/minacle/swift-tui",
+            branch: "main"
         ),
     ],
     targets: [

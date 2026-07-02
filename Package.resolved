@@ -1,5 +1,5 @@
 {
-  "originHash" : "a554c65753560dda588a022c3230fdbf6f763878f09819346c0cf6aa131b1a52",
+  "originHash" : "dbf018a0ef59e8818031902dfa3373cf044b06fed548e9a701aeb29dd0007801",
   "pins" : [
     {
       "identity" : "swift-numerics",
@@ -35,6 +35,15 @@
       "state" : {
         "branch" : "main",
         "revision" : "e21d00bd0d3640af26e0a849928e2e6e9d44ba74"
+      }
+    },
+    {
+      "identity" : "swift-tui",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/minacle/swift-tui",
+      "state" : {
+        "branch" : "main",
+        "revision" : "a73381ea97b7eee9e6e1cd1dd9ad1244d4f1ae28"
       }
     }
   ],
