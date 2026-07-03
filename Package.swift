@@ -24,10 +24,6 @@ let package = Package(
             name: "RetortTUI",
             targets: ["RetortTUI"]
         ),
-        .executable(
-            name: "RetortTUISample",
-            targets: ["RetortTUISample"]
-        ),
     ],
     dependencies: [
         .package(
@@ -44,11 +40,6 @@ let package = Package(
                     package: "swift-tui"
                 ),
             ],
-            swiftSettings: swiftSettings,
-        ),
-        .executableTarget(
-            name: "RetortTUISample",
-            dependencies: ["RetortTUI"],
             swiftSettings: swiftSettings,
         ),
         .testTarget(
