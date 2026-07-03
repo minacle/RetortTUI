@@ -246,7 +246,6 @@ private struct RetortListDemo: View {
 
             RetortListItem(
                 id: .runtime,
-                role: .button,
                 title: "Runtime",
                 collapsed: $runtimeCollapsed
             ) {

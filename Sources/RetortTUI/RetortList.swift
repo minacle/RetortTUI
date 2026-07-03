@@ -179,6 +179,20 @@ public struct RetortListItem<ID>: View where ID: Hashable {
         )
     }
 
+    public init<Destination: View>(
+        id: ID,
+        role: RetortListItemRole<RetortListItemNavigationLinkRole>,
+        title: String,
+        @ViewBuilder destination: @escaping () -> Destination
+    ) {
+        self.init(
+            id: id,
+            role: role,
+            title: Text(title),
+            destination: destination
+        )
+    }
+
     public init(
         id: ID,
         role: RetortListItemRole<RetortListItemTextRole>,
@@ -200,6 +214,23 @@ public struct RetortListItem<ID>: View where ID: Hashable {
         self.init(
             id: id,
             role: role.storage
+        ) {
+            title
+        }
+    }
+
+    public init<Destination: View>(
+        id: ID,
+        role: RetortListItemRole<RetortListItemNavigationLinkRole>,
+        title: Text,
+        @ViewBuilder destination: @escaping () -> Destination
+    ) {
+        self.init(
+            id: id,
+            role: role.storage,
+            destination: {
+                AnyView(destination())
+            }
         ) {
             title
         }
@@ -230,14 +261,12 @@ public struct RetortListItem<ID>: View where ID: Hashable {
 
     public init(
         id: ID,
-        role: RetortListItemRole<RetortListItemTextRole>,
         title: String,
         collapsed: Binding<Bool>? = nil,
         @RetortListItemBuilder<ID> children: () -> [Self]
     ) {
         self.init(
             id: id,
-            role: role,
             title: Text(title),
             collapsed: collapsed,
             children: children
@@ -246,47 +275,13 @@ public struct RetortListItem<ID>: View where ID: Hashable {
 
     public init(
         id: ID,
-        role: RetortListItemRole<RetortListItemButtonRole>,
-        title: String,
-        collapsed: Binding<Bool>? = nil,
-        @RetortListItemBuilder<ID> children: () -> [Self]
-    ) {
-        self.init(
-            id: id,
-            role: role,
-            title: Text(title),
-            collapsed: collapsed,
-            children: children
-        )
-    }
-
-    public init(
-        id: ID,
-        role: RetortListItemRole<RetortListItemTextRole>,
         title: Text,
         collapsed: Binding<Bool>? = nil,
         @RetortListItemBuilder<ID> children: () -> [Self]
     ) {
         self.init(
             id: id,
-            role: role.storage,
-            collapsed: collapsed,
-            children: children()
-        ) {
-            title
-        }
-    }
-
-    public init(
-        id: ID,
-        role: RetortListItemRole<RetortListItemButtonRole>,
-        title: Text,
-        collapsed: Binding<Bool>? = nil,
-        @RetortListItemBuilder<ID> children: () -> [Self]
-    ) {
-        self.init(
-            id: id,
-            role: role.storage,
+            role: RetortListItemRoleStorage.button,
             collapsed: collapsed,
             children: children()
         ) {

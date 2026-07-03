@@ -168,10 +168,11 @@ private final class RetortListEditingController {
 @Test func retortListNavigationLinkRoleActivatesDestination() {
     let runtime = StateRuntime()
     let view = RetortListNavigationLinkRuntimeView()
-    let proposal = RenderProposal(columns: 32, rows: 3)
+    let proposal = RenderProposal(columns: 32, rows: 4)
 
     var block = runtime.block(from: view, in: proposal)
     #expect(block?.lines.contains { $0.hasPrefix("❯ Open") } == true)
+    #expect(block?.lines.contains { $0.contains("Text title") } == true)
     _ = runtime.consumeInvalidation()
     _ = runtime.block(from: view, in: proposal)
 
@@ -1151,13 +1152,19 @@ private struct RetortListNavigationLinkRuntimeView: View {
     var body: some View {
         NavigationStack {
             RetortList(selection: $selection) {
-                RetortListItem(id: .navigation, role: .navigationLink) {
+                RetortListItem(id: .navigation, role: .navigationLink, title: "Open") {
                     Text("Detail")
+                }
+                RetortListItem(id: .item(0), role: .navigationLink, title: Text("Text title")) {
+                    Text("Text detail")
+                }
+                RetortListItem(id: .item(1), role: .navigationLink) {
+                    Text("Closure detail")
                 } title: {
-                    Text("Open")
+                    Text("Closure title")
                 }
             }
-            .frame(width: 32, height: 3, alignment: .leading)
+            .frame(width: 32, height: 4, alignment: .leading)
         }
     }
 }
@@ -1169,7 +1176,7 @@ private struct RetortListTreeRuntimeView: View {
 
     var body: some View {
         RetortList(selection: $selection) {
-            RetortListItem(id: .group, role: .button, title: "Group") {
+            RetortListItem(id: .group, title: "Group") {
                 RetortListItem(id: .child, role: .button, title: "Child")
             }
             RetortListItem(id: .item(0), role: .button, title: "Item 0")
@@ -1190,7 +1197,6 @@ private struct RetortListBoundCollapsedRuntimeView: View {
         RetortList(selection: $selection) {
             RetortListItem(
                 id: .group,
-                role: .button,
                 title: "Group",
                 collapsed: $collapsed
             ) {
@@ -1209,7 +1215,7 @@ private struct RetortListNestedLeafRuntimeView: View {
 
     var body: some View {
         RetortList(selection: $selection) {
-            RetortListItem(id: .group, role: .button, title: "Group") {
+            RetortListItem(id: .group, title: "Group") {
                 RetortListItem(id: .child, role: .button, title: "Accessory child")
                     .leadingAccessory {
                         Text("●").color(.green)
@@ -1228,11 +1234,11 @@ private struct RetortListNestedGroupRuntimeView: View {
 
     var body: some View {
         RetortList(selection: $selection) {
-            RetortListItem(id: .group, role: .button, title: "Group") {
-                RetortListItem(id: .item(10), role: .button, title: "Disclosure child") {
+            RetortListItem(id: .group, title: "Group") {
+                RetortListItem(id: .item(10), title: "Disclosure child") {
                     RetortListItem(id: .item(11), role: .button, title: "Grandchild")
                 }
-                RetortListItem(id: .item(12), role: .button, title: "Both child") {
+                RetortListItem(id: .item(12), title: "Both child") {
                     RetortListItem(id: .item(13), role: .button, title: "Both grandchild")
                 }
                 .leadingAccessory {
@@ -1331,7 +1337,6 @@ private struct RetortListMastodonConfigurationRuntimeView: View {
     ) -> RetortListItem<RuntimeListID> {
         var item = RetortListItem(
             id: id,
-            role: .button,
             title: title,
             collapsed: collapsed,
             children: children
@@ -1360,7 +1365,7 @@ private struct RetortListNestedPlainTextEditorRuntimeView: View {
 
     var body: some View {
         RetortList(selection: $selection) {
-            RetortListItem(id: .group, role: .button, title: "Group") {
+            RetortListItem(id: .group, title: "Group") {
                 RetortListItem(id: .item(20), role: .button, title: "Plain editor")
                     .editor($value)
             }
@@ -1379,7 +1384,7 @@ private struct RetortListNestedAccessoryTextEditorRuntimeView: View {
 
     var body: some View {
         RetortList(selection: $selection) {
-            RetortListItem(id: .group, role: .button, title: "Group") {
+            RetortListItem(id: .group, title: "Group") {
                 RetortListItem(id: .item(21), role: .button, title: "Accessory editor")
                     .leadingAccessory {
                         Text("●").color(.green)
@@ -1401,10 +1406,10 @@ private struct RetortListNestedReservedTextEditorRuntimeView: View {
 
     var body: some View {
         RetortList(selection: $selection) {
-            RetortListItem(id: .group, role: .button, title: "Group") {
+            RetortListItem(id: .group, title: "Group") {
                 RetortListItem(id: .item(22), role: .button, title: "Reserved editor")
                     .editor($value)
-                RetortListItem(id: .item(23), role: .button, title: "Disclosure sibling") {
+                RetortListItem(id: .item(23), title: "Disclosure sibling") {
                     RetortListItem(id: .item(24), role: .button, title: "Grandchild")
                 }
             }
@@ -1423,13 +1428,13 @@ private struct RetortListNestedReservedAccessoryTextEditorRuntimeView: View {
 
     var body: some View {
         RetortList(selection: $selection) {
-            RetortListItem(id: .group, role: .button, title: "Group") {
+            RetortListItem(id: .group, title: "Group") {
                 RetortListItem(id: .item(25), role: .button, title: "Reserved accessory editor")
                     .leadingAccessory {
                         Text("●").color(.green)
                     }
                     .editor($value)
-                RetortListItem(id: .item(26), role: .button, title: "Disclosure sibling") {
+                RetortListItem(id: .item(26), title: "Disclosure sibling") {
                     RetortListItem(id: .item(27), role: .button, title: "Grandchild")
                 }
             }
