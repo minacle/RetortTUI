@@ -31,11 +31,67 @@ enum RetortListEditor {
     )
 }
 
+enum RetortListItemRoleStorage: Equatable, Sendable {
+
+    case text
+
+    case button
+
+    case navigationLink
+}
+
+/// A type-level role token for ``RetortListItem``.
+public struct RetortListItemRole<Kind>: Sendable {
+
+    let storage: RetortListItemRoleStorage
+
+    init(_ storage: RetortListItemRoleStorage) {
+        self.storage = storage
+    }
+}
+
+/// The role marker for static text list items.
+public enum RetortListItemTextRole: Sendable {}
+
+/// The role marker for button list items.
+public enum RetortListItemButtonRole: Sendable {}
+
+/// The role marker for navigation link list items.
+public enum RetortListItemNavigationLinkRole: Sendable {}
+
+public extension RetortListItemRole where Kind == RetortListItemTextRole {
+
+    /// A list item that renders as non-focusable text.
+    static var text: Self {
+        Self(.text)
+    }
+}
+
+public extension RetortListItemRole where Kind == RetortListItemButtonRole {
+
+    /// A list item that renders as a focusable button.
+    static var button: Self {
+        Self(.button)
+    }
+}
+
+public extension RetortListItemRole where Kind == RetortListItemNavigationLinkRole {
+
+    /// A list item that renders as a focusable navigation link.
+    static var navigationLink: Self {
+        Self(.navigationLink)
+    }
+}
+
 struct RetortListItemConfiguration<ID> where ID: Hashable {
 
     var id: ID
 
+    var role: RetortListItemRoleStorage
+
     var title: AnyView
+
+    var destination: (() -> AnyView)?
 
     var subtitle: AnyView?
 
@@ -61,56 +117,127 @@ public struct RetortListItem<ID>: View where ID: Hashable {
 
     public init<Title: View>(
         id: ID,
+        role: RetortListItemRole<RetortListItemTextRole>,
         @ViewBuilder title: () -> Title
     ) {
-        self.configuration = RetortListItemConfiguration(
+        self.init(
             id: id,
-            title: AnyView(title()),
-            subtitle: nil,
-            leadingAccessory: nil,
-            editor: nil,
-            action: nil,
-            reset: nil,
-            collapsed: nil,
-            children: []
+            role: role.storage,
+            title: title
+        )
+    }
+
+    public init<Title: View>(
+        id: ID,
+        role: RetortListItemRole<RetortListItemButtonRole>,
+        @ViewBuilder title: () -> Title
+    ) {
+        self.init(
+            id: id,
+            role: role.storage,
+            title: title
+        )
+    }
+
+    public init<Destination: View, Title: View>(
+        id: ID,
+        role: RetortListItemRole<RetortListItemNavigationLinkRole>,
+        @ViewBuilder destination: @escaping () -> Destination,
+        @ViewBuilder title: () -> Title
+    ) {
+        self.init(
+            id: id,
+            role: role.storage,
+            destination: {
+                AnyView(destination())
+            },
+            title: title
         )
     }
 
     public init(
         id: ID,
+        role: RetortListItemRole<RetortListItemTextRole>,
         title: String
     ) {
         self.init(
             id: id,
+            role: role,
             title: Text(title)
         )
     }
 
     public init(
         id: ID,
-        title: Text
+        role: RetortListItemRole<RetortListItemButtonRole>,
+        title: String
     ) {
-        self.configuration = RetortListItemConfiguration(
+        self.init(
             id: id,
-            title: AnyView(title),
-            subtitle: nil,
-            leadingAccessory: nil,
-            editor: nil,
-            action: nil,
-            reset: nil,
-            collapsed: nil,
-            children: []
+            role: role,
+            title: Text(title)
         )
     }
 
     public init(
         id: ID,
+        role: RetortListItemRole<RetortListItemTextRole>,
+        title: Text
+    ) {
+        self.init(
+            id: id,
+            role: role.storage
+        ) {
+            title
+        }
+    }
+
+    public init(
+        id: ID,
+        role: RetortListItemRole<RetortListItemButtonRole>,
+        title: Text
+    ) {
+        self.init(
+            id: id,
+            role: role.storage
+        ) {
+            title
+        }
+    }
+
+    private init<Title: View>(
+        id: ID,
+        role: RetortListItemRoleStorage,
+        destination: (() -> AnyView)? = nil,
+        collapsed: Binding<Bool>? = nil,
+        children: [Self] = [],
+        @ViewBuilder title: () -> Title
+    ) {
+        self.configuration = RetortListItemConfiguration(
+            id: id,
+            role: role,
+            title: AnyView(title()),
+            destination: destination,
+            subtitle: nil,
+            leadingAccessory: nil,
+            editor: nil,
+            action: nil,
+            reset: nil,
+            collapsed: collapsed,
+            children: children
+        )
+    }
+
+    public init(
+        id: ID,
+        role: RetortListItemRole<RetortListItemTextRole>,
         title: String,
         collapsed: Binding<Bool>? = nil,
         @RetortListItemBuilder<ID> children: () -> [Self]
     ) {
         self.init(
             id: id,
+            role: role,
             title: Text(title),
             collapsed: collapsed,
             children: children
@@ -119,21 +246,52 @@ public struct RetortListItem<ID>: View where ID: Hashable {
 
     public init(
         id: ID,
+        role: RetortListItemRole<RetortListItemButtonRole>,
+        title: String,
+        collapsed: Binding<Bool>? = nil,
+        @RetortListItemBuilder<ID> children: () -> [Self]
+    ) {
+        self.init(
+            id: id,
+            role: role,
+            title: Text(title),
+            collapsed: collapsed,
+            children: children
+        )
+    }
+
+    public init(
+        id: ID,
+        role: RetortListItemRole<RetortListItemTextRole>,
         title: Text,
         collapsed: Binding<Bool>? = nil,
         @RetortListItemBuilder<ID> children: () -> [Self]
     ) {
-        self.configuration = RetortListItemConfiguration(
+        self.init(
             id: id,
-            title: AnyView(title),
-            subtitle: nil,
-            leadingAccessory: nil,
-            editor: nil,
-            action: nil,
-            reset: nil,
+            role: role.storage,
             collapsed: collapsed,
             children: children()
-        )
+        ) {
+            title
+        }
+    }
+
+    public init(
+        id: ID,
+        role: RetortListItemRole<RetortListItemButtonRole>,
+        title: Text,
+        collapsed: Binding<Bool>? = nil,
+        @RetortListItemBuilder<ID> children: () -> [Self]
+    ) {
+        self.init(
+            id: id,
+            role: role.storage,
+            collapsed: collapsed,
+            children: children()
+        ) {
+            title
+        }
     }
 
     public func subtitle<Subtitle: View>(
@@ -427,6 +585,10 @@ private struct RetortListStorage<ID>: View where ID: Hashable {
         RetortListModel.rows(from: items, collapsedIDs: collapsedIDs)
     }
 
+    private var focusableRows: [RetortListRow<ID>] {
+        visibleRows.filter(\.isFocusable)
+    }
+
     private var listContent: some View {
         VStack(alignment: .leading, spacing: 0) {
             ForEach(visibleRows, id: \.id) {
@@ -451,9 +613,35 @@ private struct RetortListStorage<ID>: View where ID: Hashable {
 
     @ViewBuilder
     private func rowView(_ row: RetortListRow<ID>) -> some View {
+        switch row.item.configuration.role {
+        case .text:
+            rowLabel(row)
+        case .button:
+            Button {
+                selection.wrappedValue = row.id
+                activateButton(row)
+            } label: {
+                rowLabel(row)
+            }
+            .focused(selection, equals: row.id)
+        case .navigationLink:
+            if let destination = row.item.configuration.destination {
+                NavigationLink(destination: destination) {
+                    rowLabel(row)
+                }
+                .focused(selection, equals: row.id)
+            }
+            else {
+                rowLabel(row)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func rowLabel(_ row: RetortListRow<ID>) -> some View {
         let isEditing = activeEditor?.id == row.id
-        let isSelected = selection.wrappedValue == row.id && !isEditing
-        let isHighlighted = selection.wrappedValue == row.id || isEditing
+        let isSelected = row.isFocusable && selection.wrappedValue == row.id && !isEditing
+        let isHighlighted = row.isFocusable && selection.wrappedValue == row.id || isEditing
         let leadingAccessory = row.item.configuration.leadingAccessory
         let subtitle = row.item.configuration.subtitle
 
@@ -482,11 +670,6 @@ private struct RetortListStorage<ID>: View where ID: Hashable {
                         .color(.brightBlack)
                 }
             }
-        }
-        .focusable(!isTextEditorActive(for: row))
-        .focused(selection, equals: row.id)
-        .onTapGesture {
-            selection.wrappedValue = row.id
         }
     }
 
@@ -590,7 +773,7 @@ private struct RetortListStorage<ID>: View where ID: Hashable {
             return .ignored
         }
 
-        let rows = visibleRows
+        let rows = focusableRows
         selection.wrappedValue = RetortListModel.movedSelection(
             selection.wrappedValue,
             input: input,
@@ -618,6 +801,52 @@ private struct RetortListStorage<ID>: View where ID: Hashable {
         guard let row = selectedRow else {
             return .ignored
         }
+        return activate(row)
+    }
+
+    private func handleSpace() -> KeyPress.Result {
+        guard activeEditor == nil,
+              let row = selectedRow,
+              row.item.configuration.role == .button else {
+            return .ignored
+        }
+
+        return activate(row)
+    }
+
+    private func handleReset() -> KeyPress.Result {
+        guard activeEditor == nil,
+              let row = selectedRow,
+              row.item.configuration.role == .button,
+              let reset = row.item.configuration.reset else {
+            return .ignored
+        }
+
+        reset()
+        return .handled
+    }
+
+    private func handleEscape() -> KeyPress.Result {
+        guard let activeEditor else {
+            return .ignored
+        }
+
+        closeEditor(updateEditingRequest: true)
+        refocusRow(activeEditor.id)
+        return .handled
+    }
+
+    private var selectedRow: RetortListRow<ID>? {
+        let selection = selection.wrappedValue
+        return focusableRows.first {
+            $0.id == selection
+        }
+    }
+
+    private func activate(_ row: RetortListRow<ID>) -> KeyPress.Result {
+        guard row.item.configuration.role == .button else {
+            return .ignored
+        }
 
         if row.isGroup {
             toggle(row)
@@ -639,44 +868,14 @@ private struct RetortListStorage<ID>: View where ID: Hashable {
         return .ignored
     }
 
-    private func handleSpace() -> KeyPress.Result {
-        guard activeEditor == nil,
-              let row = selectedRow,
-              row.isGroup else {
-            return .ignored
+    private func activateButton(_ row: RetortListRow<ID>) {
+        if activeEditor?.id == row.id {
+            commitActiveEditor(for: row.item)
+            scrollSelectionIntoView()
+            return
         }
 
-        toggle(row)
-        scrollSelectionIntoView()
-        return .handled
-    }
-
-    private func handleReset() -> KeyPress.Result {
-        guard activeEditor == nil,
-              let row = selectedRow,
-              let reset = row.item.configuration.reset else {
-            return .ignored
-        }
-
-        reset()
-        return .handled
-    }
-
-    private func handleEscape() -> KeyPress.Result {
-        guard let activeEditor else {
-            return .ignored
-        }
-
-        closeEditor(updateEditingRequest: true)
-        refocusRow(activeEditor.id)
-        return .handled
-    }
-
-    private var selectedRow: RetortListRow<ID>? {
-        let selection = selection.wrappedValue
-        return visibleRows.first {
-            $0.id == selection
-        }
+        _ = activate(row)
     }
 
     private func toggle(_ row: RetortListRow<ID>) {
@@ -819,6 +1018,7 @@ private struct RetortListStorage<ID>: View where ID: Hashable {
         }
 
         guard let row = visibleRows.first(where: { $0.id == id }),
+              row.item.configuration.role == .button,
               let editor = row.item.configuration.editor else {
             updateEditingRequest(nil)
             return
@@ -946,6 +1146,10 @@ struct RetortListRow<ID>: Identifiable where ID: Hashable {
 
     var isGroup: Bool {
         !item.configuration.children.isEmpty
+    }
+
+    var isFocusable: Bool {
+        item.configuration.role != .text
     }
 
     var disclosureMarker: String {

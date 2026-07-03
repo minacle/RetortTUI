@@ -173,7 +173,7 @@ private struct Profile {
 
 private struct SampleMarkerKey: EnvironmentKey {
 
-    static let defaultValue = "default"
+    nonisolated static let defaultValue = "default"
 }
 
 private extension EnvironmentValues {
@@ -227,7 +227,7 @@ private struct RetortListDemo: View {
 
     var body: some View {
         RetortList(selection: $selection) {
-            RetortListItem(id: .localDomain) {
+            RetortListItem(id: .localDomain, role: .button) {
                 Text("Local domain")
             }
             .editor(
@@ -246,10 +246,11 @@ private struct RetortListDemo: View {
 
             RetortListItem(
                 id: .runtime,
+                role: .button,
                 title: "Runtime",
                 collapsed: $runtimeCollapsed
             ) {
-                RetortListItem(id: .port) {
+                RetortListItem(id: .port, role: .button) {
                     Text("Port")
                 }
                 .editor(
@@ -261,6 +262,7 @@ private struct RetortListDemo: View {
                 }
                 RetortListItem(
                     id: .mode,
+                    role: .button,
                     title: "Mode"
                 )
                 .choices(
@@ -270,7 +272,7 @@ private struct RetortListDemo: View {
                 )
             }
 
-            RetortListItem(id: .reset, title: "Reset action status")
+            RetortListItem(id: .reset, role: .button, title: "Reset action status")
             .subtitle {
                 Text(actionStatus)
             }
@@ -278,7 +280,7 @@ private struct RetortListDemo: View {
                 $0 = "idle"
             }
 
-            RetortListItem(id: .extra(0), title: "Custom parsed editor")
+            RetortListItem(id: .extra(0), role: .button, title: "Custom parsed editor")
             .editor(
                 $port,
                 text: { "\($0)" },
@@ -287,13 +289,13 @@ private struct RetortListDemo: View {
             )
 
             for index in 1...10 {
-                RetortListItem(id: .extra(index), title: "Scrollable row \(index)")
+                RetortListItem(id: .extra(index), role: .button, title: "Scrollable row \(index)")
                 .subtitle {
                     Text(index.isMultiple(of: 2) ? "even" : "odd")
                 }
             }
 
-            RetortListItem(id: .action, title: "Run action")
+            RetortListItem(id: .action, role: .button, title: "Run action")
             .subtitle {
                 Text(actionStatus)
             }
