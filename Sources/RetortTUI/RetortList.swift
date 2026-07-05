@@ -662,7 +662,7 @@ private struct RetortListStorage<ID>: View where ID: Hashable {
                 HStack(spacing: 0) {
                     Text("  ")
                     subtitle
-                        .color(.brightBlack)
+                        .foregroundStyle(.brightBlack)
                 }
             }
         }
@@ -712,7 +712,7 @@ private struct RetortListStorage<ID>: View where ID: Hashable {
                     }
                 }
                 Text("Error: \(errorMessage)")
-                    .color(.red)
+                    .foregroundStyle(.red)
             }
         }
     }
