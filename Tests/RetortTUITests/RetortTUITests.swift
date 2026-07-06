@@ -47,6 +47,129 @@ private struct SmokeView: View {
     }
 }
 
+@Test func retortFlowRendersInlineChildrenWithDefaultSpacing() {
+    let block = ViewResolver.block(
+        from: RetortFlow {
+            Text("A")
+            Text("BB")
+            Text("C")
+        }
+    )
+
+    #expect(block?.width == 6)
+    #expect(block?.height == 1)
+    #expect(block?.lines == ["A BB C"])
+}
+
+@Test func retortFlowWrapsChildrenAtProposedWidth() {
+    let block = ViewResolver.block(
+        from: RetortFlow {
+            Text("A")
+            Text("BB")
+            Text("C")
+        },
+        in: RenderProposal(columns: 5)
+    )
+
+    #expect(block?.width == 5)
+    #expect(block?.height == 2)
+    #expect(block?.lines == [
+        "A BB ",
+        "C    ",
+    ])
+}
+
+@Test func retortFlowAppliesVerticalSpacingBetweenRows() {
+    let block = ViewResolver.block(
+        from: RetortFlow(verticalSpacing: 1) {
+            Text("AA")
+            Text("B")
+            Text("CC")
+        },
+        in: RenderProposal(columns: 4)
+    )
+
+    #expect(block?.width == 4)
+    #expect(block?.height == 3)
+    #expect(block?.lines == [
+        "AA B",
+        "    ",
+        "CC  ",
+    ])
+}
+
+@Test func retortFlowKeepsOversizedChildOnItsOwnRow() {
+    let block = ViewResolver.block(
+        from: RetortFlow {
+            Text("ABCDE")
+            Text("F")
+        },
+        in: RenderProposal(columns: 4)
+    )
+
+    #expect(block?.width == 4)
+    #expect(block?.height == 2)
+    #expect(block?.lines == [
+        "ABCD",
+        "F   ",
+    ])
+}
+
+@Test func retortFlowFlattensGroupAndForEachContent() {
+    let block = ViewResolver.block(
+        from: RetortFlow {
+            Group {
+                Text("A")
+                Text("B")
+            }
+            ForEach(0..<2) {
+                Text("\($0)")
+            }
+        },
+        in: RenderProposal(columns: 3)
+    )
+
+    #expect(block?.lines == [
+        "A B",
+        "0 1",
+    ])
+}
+
+@Test func retortFlowOffsetsWrappedInteractionRegions() {
+    let runtime = StateRuntime()
+    let probe = RetortFlowTapProbe()
+    let view = RetortFlow {
+        Text("AA")
+        Text("B")
+            .onTapGesture {
+                probe.recordTap()
+            }
+            .focusable()
+    }
+
+    let block = runtime.block(from: view, in: RenderProposal(columns: 2))
+
+    #expect(block?.hitRegions.map(\.frame) == [
+        RenderedRect(x: 0, y: 1, width: 1, height: 1),
+    ])
+    #expect(block?.focusRegions.map(\.frame) == [
+        RenderedRect(x: 0, y: 1, width: 1, height: 1),
+    ])
+
+    dispatchClick(to: runtime, column: 1, row: 2)
+
+    #expect(probe.tapCount == 1)
+}
+
+private final class RetortFlowTapProbe {
+
+    var tapCount = 0
+
+    func recordTap() {
+        tapCount += 1
+    }
+}
+
 private enum RuntimeListID: Hashable {
 
     case group
@@ -104,7 +227,7 @@ private final class RetortListEditingController {
     #expect(block?.lines.first?.hasPrefix("❯ ● Runtime title  subtitle") == true)
     #expect(block?.lines.contains { $0.contains("String title  value") } == true)
     #expect(block?.runs.contains {
-        $0.text == "●" && $0.style == TextStyle(color: AnyColor(Color16.green), isBold: false)
+        $0.text == "●" && $0.style == TextStyle(foregroundStyle: AnyColor(Color16.green))
     } == true)
 }
 

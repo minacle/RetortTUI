@@ -24,7 +24,7 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/minacle/swift-terminal",
       "state" : {
-        "revision" : "1f45bc5860f008543cd9a718fb1e66920ef9411d"
+        "revision" : "8579d2df55c8e1b34d07a0c3b0689732ae24f2ea"
       }
     },
     {
@@ -42,7 +42,7 @@
       "location" : "https://github.com/minacle/swift-tui",
       "state" : {
         "branch" : "main",
-        "revision" : "94b10cb0b6df4621c177d5636be4357dabb19d24"
+        "revision" : "8403b4250717d4c365272ccb855000e2b589476a"
       }
     }
   ],
